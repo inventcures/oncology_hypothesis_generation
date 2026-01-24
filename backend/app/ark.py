@@ -162,6 +162,45 @@ class OncoGraph:
         neighbors = []
         if seed_type == "Gene":
             neighbors = await self.ot_client.get_target_associations(seed_id)
+            # --- Phase 2: Add Pathway & CellType Context (Simulated) ---
+            # In a real app, this would query Reactome or a Cell Ontology API
+            # Here we inject biologically plausible nodes based on the seed gene
+
+            # 1. Pathways
+            pathways = {
+                "KRAS": ["MAPK Signaling", "PI3K-Akt Signaling"],
+                "EGFR": ["ERBB Signaling", "Glioma Pathway"],
+                "TP53": ["P53 Signaling", "Apoptosis"],
+                "STK11": ["mTOR Signaling", "AMPK Signaling"],
+                "YAP1": ["Hippo Signaling", "WNT Signaling"],
+                "BRAF": ["MAPK Signaling"],
+            }
+
+            # 2. Cell Types (Enriched expression)
+            cell_types = {
+                "KRAS": ["Epithelial Cell"],
+                "STK11": ["Macrophage (M2)"],  # Immunosuppressive context
+                "YAP1": ["Cancer Associated Fibroblast", "Malignant Cell"],
+                "CD8A": ["CD8+ T-Cell"],
+                "PDCD1": ["Exhausted T-Cell"],
+            }
+
+            # Add Pathways
+            if seed_name in pathways:
+                for p in pathways[seed_name]:
+                    self.graph.add_node(p, type="Pathway")
+                    self.graph.add_edge(
+                        seed_name, p, weight=0.85, relation="participates_in"
+                    )
+
+            # Add Cell Types
+            if seed_name in cell_types:
+                for c in cell_types[seed_name]:
+                    self.graph.add_node(c, type="CellType")
+                    self.graph.add_edge(
+                        seed_name, c, weight=0.75, relation="expressed_in"
+                    )
+
         else:
             neighbors = await self.ot_client.get_disease_associations(seed_id)
 
