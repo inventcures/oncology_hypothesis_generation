@@ -463,36 +463,71 @@ export default function Home() {
                         )}
 
                         {viewMode === "metrics" && (
-                            <div className="w-full h-full p-24 flex items-center justify-center">
-                                <div className="grid grid-cols-2 gap-6 w-full max-w-4xl">
-                                    <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm">
-                                        <h3 className="text-lg font-bold text-slate-800 mb-6">Hypothesis Confidence</h3>
-                                        <div className="space-y-4">
+                            <div className="w-full h-full p-12 flex flex-col items-center justify-center">
+                                <div className="max-w-4xl w-full mb-8 text-center">
+                                    <h3 className="text-2xl font-bold text-slate-800 mb-2">Hypothesis Evaluation Metrics</h3>
+                                    <p className="text-slate-500">
+                                        Comparison of generated hypotheses based on two key metrics: 
+                                        <strong> Confidence</strong> (Probability of biological validity based on known evidence) and 
+                                        <strong> Novelty</strong> (Degree of un-exploration in current literature).
+                                    </p>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-8 w-full max-w-5xl">
+                                    {/* Confidence Card */}
+                                    <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+                                        <div className="absolute top-0 right-0 p-4 opacity-5">
+                                            <ShieldCheck size={120} />
+                                        </div>
+                                        <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
+                                            <ShieldCheck className="text-blue-500" size={20} />
+                                            Biological Confidence
+                                        </h3>
+                                        <p className="text-xs text-slate-400 mb-6">
+                                            How strongly is this supported by existing knowledge graphs (OpenTargets) and expression data?
+                                        </p>
+                                        <div className="space-y-6">
                                             {hypotheses.map(h => (
                                                 <div key={h.id}>
-                                                    <div className="flex justify-between text-sm mb-1">
-                                                        <span className="font-medium text-slate-700">{h.title}</span>
-                                                        <span className="text-slate-500">{(h.confidence * 100).toFixed(0)}%</span>
+                                                    <div className="flex justify-between text-sm mb-2 font-medium">
+                                                        <span className="text-slate-700 truncate pr-4">{h.title}</span>
+                                                        <span className="text-blue-600">{(h.confidence * 100).toFixed(0)}%</span>
                                                     </div>
-                                                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                                        <div className="h-full bg-blue-600 rounded-full" style={{width: `${h.confidence * 100}%`}} />
+                                                    <div className="h-3 bg-slate-100 rounded-full overflow-hidden relative">
+                                                        <div 
+                                                            className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full transition-all duration-1000" 
+                                                            style={{width: `${h.confidence * 100}%`}} 
+                                                        />
                                                     </div>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
 
-                                    <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm">
-                                        <h3 className="text-lg font-bold text-slate-800 mb-6">Novelty Scores</h3>
-                                        <div className="space-y-4">
+                                    {/* Novelty Card */}
+                                    <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+                                        <div className="absolute top-0 right-0 p-4 opacity-5">
+                                            <Sparkles size={120} />
+                                        </div>
+                                        <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
+                                            <Sparkles className="text-purple-500" size={20} />
+                                            Novelty Score
+                                        </h3>
+                                        <p className="text-xs text-slate-400 mb-6">
+                                            How surprising or unexplored is this link? High scores indicate potential for new discovery.
+                                        </p>
+                                        <div className="space-y-6">
                                             {hypotheses.map(h => (
                                                 <div key={h.id}>
-                                                    <div className="flex justify-between text-sm mb-1">
-                                                        <span className="font-medium text-slate-700">{h.title}</span>
-                                                        <span className="text-slate-500">{(h.novelty_score * 100).toFixed(0)}%</span>
+                                                    <div className="flex justify-between text-sm mb-2 font-medium">
+                                                        <span className="text-slate-700 truncate pr-4">{h.title}</span>
+                                                        <span className="text-purple-600">{(h.novelty_score * 100).toFixed(0)}%</span>
                                                     </div>
-                                                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                                        <div className="h-full bg-purple-600 rounded-full" style={{width: `${h.novelty_score * 100}%`}} />
+                                                    <div className="h-3 bg-slate-100 rounded-full overflow-hidden relative">
+                                                        <div 
+                                                            className="h-full bg-gradient-to-r from-purple-400 to-purple-600 rounded-full transition-all duration-1000" 
+                                                            style={{width: `${h.novelty_score * 100}%`}} 
+                                                        />
                                                     </div>
                                                 </div>
                                             ))}
