@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText } from "lucide-react";
+import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight } from "lucide-react";
 
 type Hypothesis = {
   id: string;
@@ -44,14 +44,19 @@ export default function Home() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphLink[] } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
   const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers">("graph");
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query) return;
+  const handleSubmit = async (e?: React.FormEvent, overrideQuery?: string) => {
+    if (e) e.preventDefault();
+    const textToSearch = overrideQuery || query;
+    if (!textToSearch) return;
 
+    if (overrideQuery) setQuery(overrideQuery);
+    
     setLoading(true);
+    setHasSearched(true);
     setHypotheses([]);
     setGraphData(null);
     setPapers([]);
@@ -66,7 +71,7 @@ export default function Home() {
       const res = await fetch(`${apiUrl}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: query }),
+        body: JSON.stringify({ text: textToSearch }),
       });
       
       if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
@@ -84,6 +89,10 @@ export default function Home() {
     }
   };
 
+  const handleExampleClick = (text: string) => {
+    handleSubmit(undefined, text);
+  };
+
   const getNodeColor = (type: string) => {
     switch (type) {
       case "Gene": return "#3b82f6"; // Blue
@@ -97,50 +106,122 @@ export default function Home() {
   return (
     <main className="flex min-h-screen flex-col bg-slate-50 text-slate-900 font-sans">
       {/* Header */}
-      <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-200 shadow-sm z-20">
-        <div className="flex items-center gap-2">
+      <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-200 shadow-sm z-20 sticky top-0">
+        <div className="flex items-center gap-2 cursor-pointer" onClick={() => setHasSearched(false)}>
           <div className="bg-blue-600 p-1.5 rounded-lg">
              <Activity className="text-white w-5 h-5" />
           </div>
           <h1 className="text-xl font-bold tracking-tight text-slate-800">Onco-TTT</h1>
         </div>
-        <div className="flex gap-6 text-sm font-medium">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${status.includes("ARK") ? "bg-blue-500 animate-pulse" : "bg-green-500"}`}></div>
-            <span className="text-slate-600">ARK Agent</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${status.includes("MEDEA") ? "bg-amber-500 animate-pulse" : "bg-green-500"}`}></div>
-            <span className="text-slate-600">MEDEA Verifier</span>
-          </div>
-        </div>
+        
+        {hasSearched && (
+            <div className="flex gap-6 text-sm font-medium">
+            <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${status.includes("ARK") ? "bg-blue-500 animate-pulse" : "bg-green-500"}`}></div>
+                <span className="text-slate-600">ARK Agent</span>
+            </div>
+            <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${status.includes("MEDEA") ? "bg-amber-500 animate-pulse" : "bg-green-500"}`}></div>
+                <span className="text-slate-600">MEDEA Verifier</span>
+            </div>
+            </div>
+        )}
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      {!hasSearched ? (
+        // --- HERO SECTION (Initial View) ---
+        <div className="flex-1 flex flex-col items-center justify-center p-6 -mt-20">
+            <div className="w-full max-w-3xl text-center space-y-8">
+                
+                <div className="space-y-4">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-sm font-medium border border-blue-100">
+                        <Sparkles size={14} />
+                        <span>Powered by Test-Time Training & OpenTargets</span>
+                    </div>
+                    <h2 className="text-5xl font-extrabold text-slate-900 tracking-tight leading-tight">
+                        Discover Hidden <br/> 
+                        <span className="text-blue-600">Oncology Mechanisms</span>
+                    </h2>
+                    <p className="text-lg text-slate-500 max-w-2xl mx-auto">
+                        An AI agent that adapts to your specific query in real-time. 
+                        Generate verified hypotheses, visualize pathways, and validate with literature.
+                    </p>
+                </div>
+
+                {/* Big Search Bar */}
+                <div className="relative max-w-2xl mx-auto group">
+                    <div className="absolute inset-0 bg-blue-500 rounded-2xl blur opacity-20 group-hover:opacity-30 transition-opacity"></div>
+                    <div className="relative bg-white rounded-2xl shadow-xl border border-slate-200 flex items-center p-2 transition-all ring-1 ring-slate-900/5 focus-within:ring-2 focus-within:ring-blue-500">
+                        <Search className="ml-4 text-slate-400" size={24} />
+                        <input 
+                            type="text" 
+                            className="flex-1 bg-transparent border-none focus:ring-0 text-lg p-4 placeholder:text-slate-400 text-slate-800"
+                            placeholder="Describe a clinical phenomenon or resistance pattern..."
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+                            autoFocus
+                        />
+                        <button 
+                            onClick={() => handleSubmit()}
+                            disabled={!query}
+                            className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <ArrowRight size={20} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Suggested Queries */}
+                <div className="pt-8">
+                    <p className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Try exploring</p>
+                    <div className="flex flex-wrap justify-center gap-3">
+                        {[
+                            "KRAS G12C resistance mechanisms",
+                            "STK11 loss in Lung Adenocarcinoma",
+                            "Role of YAP1 in immunotherapy failure",
+                            "EGFR T790M bypass tracks"
+                        ].map((q) => (
+                            <button
+                                key={q}
+                                onClick={() => handleExampleClick(q)}
+                                className="px-4 py-2 bg-white border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded-full text-sm font-medium text-slate-600 transition-all shadow-sm hover:shadow-md"
+                            >
+                                {q}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+            </div>
+        </div>
+      ) : (
+        // --- MAIN APP (Split View) ---
+        <div className="flex flex-1 overflow-hidden">
         {/* Sidebar / Feed */}
-        <aside className="w-[400px] bg-white border-r border-slate-200 flex flex-col z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-          <div className="p-6 border-b border-slate-100">
-            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Research Query</h2>
-            <form onSubmit={handleSubmit}>
+        <aside className="w-[350px] bg-white border-r border-slate-200 flex flex-col z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+          <div className="p-4 border-b border-slate-100">
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Refine Query</h2>
+            <form onSubmit={(e) => handleSubmit(e)}>
               <div className="relative group">
                 <textarea
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Ask a complex question (e.g., 'Targetable mechanisms in KRAS G12C resistance')..."
-                  className="w-full h-32 p-4 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none resize-none transition-all"
+                  placeholder="Refine your research question..."
+                  className="w-full h-24 p-3 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:outline-none resize-none transition-all"
                 />
                 <button
                   type="submit"
                   disabled={loading}
-                  className="absolute bottom-3 right-3 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-600/20"
+                  className="absolute bottom-2 right-2 p-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-all shadow-sm"
                 >
-                  <Send size={16} />
+                  <Send size={14} />
                 </button>
               </div>
             </form>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+          <div className="flex-1 overflow-y-auto p-4 bg-slate-50/50">
             <div className="flex items-center justify-between mb-4">
                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                   Live Feed
@@ -203,34 +284,35 @@ export default function Home() {
         {/* Main Canvas Area */}
         <section className="flex-1 flex flex-col relative bg-white">
             {/* Toolbar */}
-            <div className="absolute top-6 left-6 z-10 flex gap-2 bg-white/90 backdrop-blur border border-slate-200 p-1.5 rounded-lg shadow-sm">
+            <div className="absolute top-4 left-6 z-10 flex gap-1 bg-white/80 backdrop-blur-md border border-slate-200 p-1 rounded-lg shadow-sm">
                 <button 
                     onClick={() => setViewMode("graph")}
-                    className={`p-2 rounded-md transition-colors ${viewMode === "graph" ? "bg-blue-50 text-blue-600" : "text-slate-500 hover:bg-slate-50"}`}
-                    title="Graph View"
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "graph" ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
-                    <Network size={20} />
+                    <Network size={16} />
+                    <span>Graph</span>
                 </button>
+                <div className="w-px bg-slate-200 my-1 mx-1"></div>
                 <button 
                     onClick={() => setViewMode("table")}
-                    className={`p-2 rounded-md transition-colors ${viewMode === "table" ? "bg-blue-50 text-blue-600" : "text-slate-500 hover:bg-slate-50"}`}
-                    title="Evidence Table"
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "table" ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
-                    <TableIcon size={20} />
+                    <TableIcon size={16} />
+                    <span>Table</span>
                 </button>
                 <button 
                     onClick={() => setViewMode("metrics")}
-                    className={`p-2 rounded-md transition-colors ${viewMode === "metrics" ? "bg-blue-50 text-blue-600" : "text-slate-500 hover:bg-slate-50"}`}
-                    title="Metrics"
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "metrics" ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
-                    <BarChart3 size={20} />
+                    <BarChart3 size={16} />
+                    <span>Metrics</span>
                 </button>
                 <button 
                     onClick={() => setViewMode("papers")}
-                    className={`p-2 rounded-md transition-colors ${viewMode === "papers" ? "bg-blue-50 text-blue-600" : "text-slate-500 hover:bg-slate-50"}`}
-                    title="Literature"
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "papers" ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
-                    <FileText size={20} />
+                    <FileText size={16} />
+                    <span>Papers</span>
                 </button>
             </div>
 
@@ -432,6 +514,7 @@ export default function Home() {
             </div>
         </section>
       </div>
+      )}
     </main>
   );
 }
