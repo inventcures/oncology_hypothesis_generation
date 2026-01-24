@@ -418,30 +418,41 @@ export default function Home() {
                         )}
 
                         {viewMode === "table" && (
-                            <div className="w-full h-full p-24 overflow-auto">
-                                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="w-full h-full p-12 overflow-auto">
+                                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden max-w-5xl mx-auto">
+                                    <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+                                        <h3 className="text-lg font-bold text-slate-800">Entity Evidence Table</h3>
+                                        <p className="text-sm text-slate-500 mt-1">
+                                            Below are the biological entities (Genes, Diseases, Drugs) identified by the <strong>ARK Agent</strong> as relevant to your query. 
+                                            The coordinates represent their position in the TTT embedding space.
+                                        </p>
+                                    </div>
                                     <table className="w-full text-sm text-left">
                                         <thead className="bg-slate-50 border-b border-slate-200">
                                             <tr>
-                                                <th className="px-6 py-4 font-semibold text-slate-700">Entity Name</th>
-                                                <th className="px-6 py-4 font-semibold text-slate-700">Type</th>
-                                                <th className="px-6 py-4 font-semibold text-slate-700">Coordinates</th>
+                                                <th className="px-6 py-4 font-semibold text-slate-700 w-1/3">Entity Name</th>
+                                                <th className="px-6 py-4 font-semibold text-slate-700 w-1/4">Type</th>
+                                                <th className="px-6 py-4 font-semibold text-slate-700">Relevance Context</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
                                             {graphData.nodes.map((n) => (
-                                                <tr key={n.id} className="hover:bg-slate-50/50">
+                                                <tr key={n.id} className="hover:bg-slate-50/50 transition-colors">
                                                     <td className="px-6 py-4 font-medium text-slate-900">{n.id}</td>
                                                     <td className="px-6 py-4">
                                                         <span 
-                                                            className="px-2 py-1 rounded-full text-xs font-semibold text-white"
+                                                            className="px-2.5 py-1 rounded-full text-xs font-semibold text-white shadow-sm"
                                                             style={{backgroundColor: getNodeColor(n.type)}}
                                                         >
                                                             {n.type}
                                                         </span>
                                                     </td>
-                                                    <td className="px-6 py-4 text-slate-500 font-mono text-xs">
-                                                        {n.x.toFixed(0)}, {n.y.toFixed(0)}
+                                                    <td className="px-6 py-4 text-slate-500 text-xs">
+                                                        {/* Contextual help based on type */}
+                                                        {n.type === 'Gene' && `Potential driver or target in ${query.split(' ')[0]} context.`}
+                                                        {n.type === 'Disease' && `Clinical condition associated with retrieved targets.`}
+                                                        {n.type === 'Drug' && `Therapeutic agent interacting with this pathway.`}
+                                                        {n.type === 'Mechanism' && `Biological process implicated in resistance.`}
                                                     </td>
                                                 </tr>
                                             ))}
