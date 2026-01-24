@@ -1,7 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight } from "lucide-react";
+import dynamic from "next/dynamic";
+import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+
+// Dynamically import MolstarViewer to avoid SSR issues
+const MolstarViewer = dynamic(() => import("./components/MolstarViewer"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center bg-slate-900 rounded-lg">
+      <div className="text-center">
+        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-slate-400 text-sm">Loading 3D Viewer...</p>
+      </div>
+    </div>
+  ),
+});
 
 type Hypothesis = {
   id: string;
@@ -46,7 +60,50 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
-  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "deep_research">("graph");
+  const [drData, setDrData] = useState<any>(null);
+  const [drLoading, setDrLoading] = useState(false);
+
+  const handleDeepResearch = async () => {
+    if (!graphData || graphData.nodes.length === 0) return;
+    
+    // Naive heuristic: Pick the first Gene node as the target
+    const targetNode = graphData.nodes.find(n => n.type === 'Gene') || graphData.nodes[0];
+    const diseaseNode = graphData.nodes.find(n => n.type === 'Disease') || { id: "Cancer" };
+    
+    // Extract mutation from query if present (e.g., "G12C", "V600E")
+    const mutationMatch = query.match(/([A-Z]\d+[A-Z])/i);
+    const mutation = mutationMatch ? mutationMatch[1].toUpperCase() : null;
+    
+    setDrLoading(true);
+    try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
+        
+        // Build structure URL with mutation if present
+        const structureUrl = mutation 
+            ? `${apiUrl}/structure/${targetNode.id}?mutation=${mutation}`
+            : `${apiUrl}/structure/${targetNode.id}`;
+        
+        // Parallel Fetching
+        const [structRes, patentRes, modelRes, protoRes] = await Promise.all([
+            fetch(structureUrl),
+            fetch(`${apiUrl}/patents/check?gene=${targetNode.id}&disease=${diseaseNode.id}`),
+            fetch(`${apiUrl}/models/recommend?tissue=Lung&mutation=${mutation || targetNode.id}`),
+            fetch(`${apiUrl}/protocols/generate?method=crispr&gene=${targetNode.id}&cell_line=A549`)
+        ]);
+
+        const struct = await structRes.json();
+        const patent = await patentRes.json();
+        const models = await modelRes.json();
+        const proto = await protoRes.json();
+
+        setDrData({ struct, patent, models, proto, target: targetNode.id, mutation });
+    } catch (e) {
+        console.error("Deep Research Failed", e);
+    } finally {
+        setDrLoading(false);
+    }
+  };
 
   const handleSubmit = async (e?: React.FormEvent, overrideQuery?: string) => {
     if (e) e.preventDefault();
@@ -67,7 +124,7 @@ export default function Home() {
       setTimeout(() => setStatus("ARK Exploring Knowledge Graph..."), 1000);
       setTimeout(() => setStatus("LitAgent Searching Papers..."), 2500);
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
       const res = await fetch(`${apiUrl}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -313,6 +370,14 @@ export default function Home() {
                 >
                     <FileText size={16} />
                     <span>Papers</span>
+                </button>
+                <div className="w-px bg-slate-200 my-1 mx-1"></div>
+                <button 
+                    onClick={() => setViewMode("deep_research")}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "deep_research" ? "bg-purple-50 text-purple-600 shadow-sm border border-purple-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <FlaskConical size={16} />
+                    <span>Deep Research</span>
                 </button>
             </div>
 
@@ -593,6 +658,283 @@ export default function Home() {
                                         </div>
                                     )}
                                 </div>
+                            </div>
+                        )}
+
+                        {viewMode === "deep_research" && (
+                            <div className="w-full h-full p-12 overflow-auto bg-slate-50/50">
+                                {!drData ? (
+                                    <div className="flex flex-col items-center justify-center h-full">
+                                        <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 max-w-md text-center">
+                                            <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                                                <FlaskConical className="text-purple-600" size={32} />
+                                            </div>
+                                            <h3 className="text-xl font-bold text-slate-900 mb-2">Deep Feasibility Check</h3>
+                                            <p className="text-slate-500 mb-8">
+                                                Analyze structural druggability, patent landscape, and cell line availability for the identified targets.
+                                            </p>
+                                            <button 
+                                                onClick={handleDeepResearch}
+                                                disabled={drLoading}
+                                                className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                                            >
+                                                {drLoading ? (
+                                                    <>
+                                                        <Activity className="animate-spin" size={18} />
+                                                        Running Analysis...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Sparkles size={18} />
+                                                        Run Deep Research
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="max-w-7xl mx-auto space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <h2 className="text-2xl font-bold text-slate-800">Feasibility Report: <span className="text-blue-600">{drData.target}</span></h2>
+                                            <button onClick={() => setDrData(null)} className="text-sm text-slate-500 hover:text-slate-800">Reset Analysis</button>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            {/* Module A: Structure */}
+                                            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm col-span-2">
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <Dna className="text-blue-500" />
+                                                        <h3 className="font-bold text-slate-700">Virtual Structural Biologist</h3>
+                                                    </div>
+                                                    {drData.struct.uniprot_id && (
+                                                        <a 
+                                                            href={drData.struct.pdb_url} 
+                                                            target="_blank" 
+                                                            className="text-xs text-blue-600 hover:underline"
+                                                        >
+                                                            Download PDB
+                                                        </a>
+                                                    )}
+                                                </div>
+                                                
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    {/* 3D Viewer */}
+                                                    <div className="aspect-square bg-slate-900 rounded-lg overflow-hidden">
+                                                        {drData.struct.pdb_content ? (
+                                                            <MolstarViewer
+                                                                pdbContent={drData.struct.pdb_content}
+                                                                pockets={drData.struct.pockets || []}
+                                                                mutationAnalysis={drData.struct.mutation_analysis}
+                                                                bindingResidues={drData.struct.binding_site_residues || []}
+                                                            />
+                                                        ) : drData.struct.error ? (
+                                                            <div className="w-full h-full flex items-center justify-center">
+                                                                <div className="text-center p-4">
+                                                                    <XCircle className="w-12 h-12 text-red-400 mx-auto mb-2" />
+                                                                    <p className="text-red-400 text-sm">{drData.struct.error}</p>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="w-full h-full flex items-center justify-center">
+                                                                <p className="text-slate-500">No structure data</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    
+                                                    {/* Analysis Panel */}
+                                                    <div className="space-y-4">
+                                                        {/* Druggability Score */}
+                                                        <div className="bg-slate-50 p-4 rounded-lg">
+                                                            <div className="flex justify-between items-center mb-2">
+                                                                <span className="text-sm font-medium text-slate-600">Overall Druggability</span>
+                                                                <span className={`px-2 py-1 text-xs font-bold rounded-md ${
+                                                                    drData.struct.druggability_score > 0.7 
+                                                                        ? 'bg-green-100 text-green-700' 
+                                                                        : drData.struct.druggability_score > 0.5 
+                                                                            ? 'bg-blue-100 text-blue-700'
+                                                                            : 'bg-amber-100 text-amber-700'
+                                                                }`}>
+                                                                    {(drData.struct.druggability_score * 100).toFixed(0)}%
+                                                                </span>
+                                                            </div>
+                                                            <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                                                                <div 
+                                                                    className={`h-full rounded-full ${
+                                                                        drData.struct.druggability_score > 0.7 
+                                                                            ? 'bg-green-500' 
+                                                                            : drData.struct.druggability_score > 0.5 
+                                                                                ? 'bg-blue-500'
+                                                                                : 'bg-amber-500'
+                                                                    }`}
+                                                                    style={{ width: `${drData.struct.druggability_score * 100}%` }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        {/* Binding Pockets */}
+                                                        <div>
+                                                            <h4 className="text-sm font-semibold text-slate-700 mb-2">
+                                                                Predicted Binding Pockets ({drData.struct.pockets?.length || 0})
+                                                            </h4>
+                                                            <div className="space-y-2 max-h-32 overflow-y-auto">
+                                                                {drData.struct.pockets?.slice(0, 3).map((pocket: any, i: number) => (
+                                                                    <div key={pocket.id} className="flex items-center justify-between p-2 bg-slate-50 rounded text-xs">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span 
+                                                                                className="w-3 h-3 rounded-full" 
+                                                                                style={{ backgroundColor: pocket.color }}
+                                                                            />
+                                                                            <span className="text-slate-600">{pocket.name}</span>
+                                                                        </div>
+                                                                        <span className={`font-medium ${
+                                                                            pocket.druggability_label === 'High' ? 'text-green-600' :
+                                                                            pocket.druggability_label === 'Medium' ? 'text-blue-600' : 'text-amber-600'
+                                                                        }`}>
+                                                                            {pocket.druggability_label}
+                                                                        </span>
+                                                                    </div>
+                                                                ))}
+                                                                {(!drData.struct.pockets || drData.struct.pockets.length === 0) && (
+                                                                    <p className="text-xs text-slate-400 italic">No binding pockets detected</p>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        {/* Mutation Analysis */}
+                                                        {drData.struct.mutation_analysis && (
+                                                            <div className="bg-red-50 p-3 rounded-lg border border-red-100">
+                                                                <h4 className="text-sm font-semibold text-red-700 mb-2 flex items-center gap-1">
+                                                                    <AlertTriangle className="w-4 h-4" />
+                                                                    Mutation: {drData.mutation}
+                                                                </h4>
+                                                                {drData.struct.mutation_analysis.found ? (
+                                                                    <div className="space-y-1 text-xs">
+                                                                        <p className="text-slate-600">
+                                                                            Position: Residue {drData.struct.mutation_analysis.position}
+                                                                        </p>
+                                                                        <p className={`font-medium ${
+                                                                            drData.struct.mutation_analysis.in_binding_pocket 
+                                                                                ? 'text-red-600' 
+                                                                                : 'text-slate-600'
+                                                                        }`}>
+                                                                            {drData.struct.mutation_analysis.impact_assessment}
+                                                                        </p>
+                                                                        <div className="flex items-center gap-2 mt-2">
+                                                                            <span className="text-slate-500">Impact Score:</span>
+                                                                            <div className="flex-1 h-1.5 bg-red-100 rounded-full">
+                                                                                <div 
+                                                                                    className="h-full bg-red-500 rounded-full"
+                                                                                    style={{ width: `${drData.struct.mutation_analysis.impact_score * 100}%` }}
+                                                                                />
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                ) : (
+                                                                    <p className="text-xs text-slate-500">
+                                                                        {drData.struct.mutation_analysis.message || "Mutation position not found in structure"}
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                        
+                                                        {/* Structure Stats */}
+                                                        {drData.struct.analysis && (
+                                                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                                                <div className="bg-slate-50 p-2 rounded">
+                                                                    <span className="text-slate-500">Residues</span>
+                                                                    <p className="font-semibold text-slate-700">{drData.struct.analysis.residue_count}</p>
+                                                                </div>
+                                                                <div className="bg-slate-50 p-2 rounded">
+                                                                    <span className="text-slate-500">Avg pLDDT</span>
+                                                                    <p className="font-semibold text-slate-700">{drData.struct.analysis.avg_plddt?.toFixed(1)}</p>
+                                                                </div>
+                                                                <div className="bg-slate-50 p-2 rounded col-span-2">
+                                                                    <span className="text-slate-500">High Confidence Regions</span>
+                                                                    <p className="font-semibold text-slate-700">{drData.struct.analysis.high_confidence_pct?.toFixed(0)}% of structure</p>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Module B: Patents */}
+                                            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <Scale className="text-amber-500" />
+                                                    <h3 className="font-bold text-slate-700">Patent Landscape</h3>
+                                                </div>
+                                                <div className="space-y-4">
+                                                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
+                                                        <span className="text-sm text-slate-600">Risk Level</span>
+                                                        <span className={`font-bold ${drData.patent.scooped_score === 'High' ? 'text-red-600' : 'text-green-600'}`}>
+                                                            {drData.patent.scooped_score}
+                                                        </span>
+                                                    </div>
+                                                    <div className="h-40 flex items-end justify-between gap-2 px-4 border-b border-slate-200 pb-2">
+                                                        {drData.patent.heatmap?.map((firm: any, i: number) => (
+                                                            <div key={i} className="flex flex-col items-center gap-1 group">
+                                                                <div 
+                                                                    className="w-8 bg-amber-400 rounded-t-sm transition-all group-hover:bg-amber-500"
+                                                                    style={{height: `${Math.min(100, firm.data.reduce((acc:any, d:any) => acc + d.count, 0) * 2)}%`}}
+                                                                ></div>
+                                                                <span className="text-[10px] text-slate-400 -rotate-45 origin-left translate-y-4 w-12 truncate">{firm.name}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    <div className="pt-6 text-center">
+                                                        <a href={drData.patent.google_patents_link} target="_blank" className="text-xs text-blue-600 hover:underline">
+                                                            View {drData.patent.recent_filings_5y} recent filings on Google Patents
+                                                        </a>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Module C: Models */}
+                                            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <Microscope className="text-emerald-500" />
+                                                    <h3 className="font-bold text-slate-700">Recommended Models</h3>
+                                                </div>
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-sm text-left">
+                                                        <thead className="text-xs text-slate-500 bg-slate-50 uppercase">
+                                                            <tr>
+                                                                <th className="px-3 py-2">Cell Line</th>
+                                                                <th className="px-3 py-2">Tissue</th>
+                                                                <th className="px-3 py-2">Match</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {drData.models.slice(0, 3).map((m: any) => (
+                                                                <tr key={m.id} className="border-b border-slate-100">
+                                                                    <td className="px-3 py-2 font-medium">{m.name}</td>
+                                                                    <td className="px-3 py-2 text-slate-500">{m.tissue}</td>
+                                                                    <td className="px-3 py-2 text-green-600 font-bold">{(m.match_score * 100).toFixed(0)}%</td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+
+                                            {/* Module D: Protocol */}
+                                            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <FileEdit className="text-indigo-500" />
+                                                    <h3 className="font-bold text-slate-700">Validation Protocol</h3>
+                                                </div>
+                                                <div className="bg-slate-900 text-slate-300 p-4 rounded-lg font-mono text-xs h-48 overflow-y-auto whitespace-pre-wrap">
+                                                    {drData.proto.content}
+                                                </div>
+                                                <button className="mt-4 w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-lg transition-colors">
+                                                    Copy to Lab Notebook
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </>

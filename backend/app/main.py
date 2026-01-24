@@ -8,6 +8,10 @@ from .ark import OncoGraph
 from .ttt import TTTAdapter
 from .literature import LiteratureAgent
 from .atlas import AtlasAgent
+from .structure import StructureAgent
+from .legal import PatentAgent
+from .models import ModelAgent
+from .protocols import ProtocolAgent
 
 app = FastAPI(
     title="Onco-TTT API", description="Backend for Oncology Test-Time Training Engine"
@@ -17,8 +21,9 @@ app = FastAPI(
 origins = [
     "http://localhost:3000",
     "https://onco-ttt-frontend.up.railway.app",
-    "https://onco-hypothesis.up.railway.app",  # New verified domain
-    "*",  # Allow all to prevent future CORS headaches during prototyping
+    "https://onco-hypothesis.up.railway.app",
+    "https://onco-hypothesis-generation.up.railway.app",
+    "*",
 ]
 
 app.add_middleware(
@@ -34,6 +39,10 @@ graph = OncoGraph()
 ttt_engine = TTTAdapter()
 lit_agent = LiteratureAgent()
 atlas_agent = AtlasAgent()
+structure_agent = StructureAgent()
+patent_agent = PatentAgent()
+model_agent = ModelAgent()
+protocol_agent = ProtocolAgent()
 
 
 # --- Data Models ---
@@ -174,6 +183,46 @@ async def generate_hypotheses(query: Query):
         papers=papers,
         atlas=atlas_data,
     )
+
+
+@app.get("/structure/{gene}")
+async def get_structure_analysis(gene: str, mutation: Optional[str] = None):
+    """
+    Module A: Virtual Structural Biologist
+    Fetches AlphaFold structure and predicts binding pockets.
+
+    Args:
+        gene: Gene symbol (e.g., "KRAS", "EGFR")
+        mutation: Optional mutation string (e.g., "G12C", "V600E")
+    """
+    return await structure_agent.fetch_structure(gene, mutation)
+
+
+@app.get("/patents/check")
+async def check_patents(gene: str, disease: str = "Cancer"):
+    """
+    Module B: Patent Hawk
+    Checks for IP saturation (Freedom to Operate).
+    """
+    return await patent_agent.search_patents(gene, disease)
+
+
+@app.get("/models/recommend")
+async def recommend_models(tissue: str, mutation: Optional[str] = None):
+    """
+    Module C: Model Matchmaker
+    Finds the best cell line 'avatar' for the experiment.
+    """
+    return await model_agent.find_models(tissue, mutation)
+
+
+@app.get("/protocols/generate")
+def generate_protocol(method: str, gene: str, cell_line: str):
+    """
+    Module D: Protocol Droid
+    Generates experimental protocols.
+    """
+    return protocol_agent.generate_protocol(method, gene, cell_line)
 
 
 @app.get("/health")
