@@ -333,7 +333,7 @@ export default function Home() {
                                     <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
                                 </marker>
                                 </defs>
-                                {/* Links */}
+                                {/* Links with Labels */}
                                 {graphData.links.map((link, i) => {
                                 const source = graphData.nodes.find(n => n.id === link.source);
                                 const target = graphData.nodes.find(n => n.id === link.target);
@@ -349,12 +349,32 @@ export default function Home() {
                                         strokeWidth={1.5}
                                         markerEnd="url(#arrowhead)"
                                     />
+                                    {/* Edge Label Background */}
+                                    <rect 
+                                        x={(source.x + target.x)/2 - 20} 
+                                        y={(source.y + target.y)/2 - 10} 
+                                        width="40" 
+                                        height="14" 
+                                        rx="4" 
+                                        fill="white" 
+                                        opacity="0.8"
+                                    />
+                                    {/* Edge Label Text */}
+                                    <text 
+                                        x={(source.x + target.x)/2} 
+                                        y={(source.y + target.y)/2} 
+                                        textAnchor="middle" 
+                                        dominantBaseline="middle"
+                                        className="text-[9px] fill-slate-400 font-mono"
+                                    >
+                                        {(link.weight * 100).toFixed(0)}%
+                                    </text>
                                     </g>
                                 );
                                 })}
-                                {/* Nodes */}
+                                {/* Nodes with Tooltips */}
                                 {graphData.nodes.map((node) => (
-                                <g key={node.id} transform={`translate(${node.x},${node.y})`} className="group">
+                                <g key={node.id} transform={`translate(${node.x},${node.y})`} className="group relative">
                                     <circle
                                     r={24}
                                     fill={getNodeColor(node.type)}
@@ -362,6 +382,8 @@ export default function Home() {
                                     stroke="white"
                                     strokeWidth={3}
                                     />
+                                    
+                                    {/* Node Label */}
                                     <text
                                     dy={45}
                                     textAnchor="middle"
@@ -369,6 +391,8 @@ export default function Home() {
                                     >
                                     {node.id}
                                     </text>
+                                    
+                                    {/* Icon / Type Label */}
                                     <text
                                     dy={5}
                                     textAnchor="middle"
@@ -379,6 +403,15 @@ export default function Home() {
                                     >
                                     {node.type.slice(0, 2).toUpperCase()}
                                     </text>
+
+                                    {/* Tooltip (Pure CSS/SVG Implementation) */}
+                                    <foreignObject x="-80" y="-80" width="160" height="60" className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                        <div className="bg-slate-800 text-white text-xs rounded-lg py-2 px-3 shadow-xl text-center">
+                                            <p className="font-bold mb-0.5">{node.id}</p>
+                                            <p className="text-slate-300 text-[10px]">{node.type}</p>
+                                            <div className="absolute bottom-[-4px] left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"></div>
+                                        </div>
+                                    </foreignObject>
                                 </g>
                                 ))}
                             </svg>
