@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+venv/
+.env
+
+# Build outputs
+.next/
+build/
+dist/
+__pycache__/
+*.pyc
+
+# System
+.DS_Store
+.railway/
+
+# Logs
+*.log
