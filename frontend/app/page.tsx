@@ -551,6 +551,7 @@ export default function Home() {
                                 </g>
                                 ))}
                             </svg>
+                            </>
                         )}
 
                         {viewMode === "table" && (

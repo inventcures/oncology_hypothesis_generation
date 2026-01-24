@@ -176,8 +176,7 @@ export default function MolstarViewer({
             
             const loci = StructureSelection.toLociWithSourceUnits(sel);
             plugin.managers.interactivity.lociHighlights.highlight({ 
-              loci, 
-              color: ColorNames.red 
+              loci
             });
           } catch (e) {
             console.log("Could not highlight mutation:", e);
