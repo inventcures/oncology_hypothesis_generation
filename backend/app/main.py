@@ -14,8 +14,9 @@ app = FastAPI(
 # Enable CORS for frontend
 origins = [
     "http://localhost:3000",
-    "https://onco-ttt-frontend.up.railway.app",  # Potential railway domain
-    "*",  # Allow all for prototype simplicity
+    "https://onco-ttt-frontend.up.railway.app",
+    "https://onco-hypothesis.up.railway.app",  # New verified domain
+    "*",  # Allow all to prevent future CORS headaches during prototyping
 ]
 
 app.add_middleware(
