@@ -1,3 +1,5 @@
+"use client";
+
 import { useState } from "react";
 import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText } from "lucide-react";
 
