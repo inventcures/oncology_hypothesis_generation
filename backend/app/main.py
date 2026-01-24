@@ -12,6 +12,7 @@ from .structure import StructureAgent
 from .legal import PatentAgent
 from .models import ModelAgent
 from .protocols import ProtocolAgent
+from .validation import ValidationAgent
 
 app = FastAPI(
     title="Onco-TTT API", description="Backend for Oncology Test-Time Training Engine"
@@ -43,6 +44,7 @@ structure_agent = StructureAgent()
 patent_agent = PatentAgent()
 model_agent = ModelAgent()
 protocol_agent = ProtocolAgent()
+validation_agent = ValidationAgent()
 
 
 # --- Data Models ---
@@ -245,6 +247,26 @@ async def generate_protocol(
     return await protocol_agent.generate_protocol(
         method, gene, cell_line, target_sequence, use_llm
     )
+
+
+@app.get("/validate")
+async def validate_hypothesis(
+    gene: str, disease: str, cancer_type: Optional[str] = None
+):
+    """
+    v2 Validation Dashboard
+    Runs comprehensive validation checks on a hypothesis.
+
+    Includes:
+    1. Essentiality (DepMap CRISPR)
+    2. Survival Impact (TCGA)
+    3. Safety Profile (GTEx)
+    4. Tractability (Drug databases)
+    5. Biomarker Context (Synthetic lethality)
+    6. Competition (Clinical trials)
+    7. Auto-Rationale Synthesis
+    """
+    return await validation_agent.validate_hypothesis(gene, disease, cancer_type)
 
 
 @app.get("/health")

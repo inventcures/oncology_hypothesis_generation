@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target } from "lucide-react";
 
-// Dynamically import MolstarViewer to avoid SSR issues
+// Dynamically import components to avoid SSR issues
 const MolstarViewer = dynamic(() => import("./components/MolstarViewer"), {
   ssr: false,
   loading: () => (
@@ -13,6 +13,15 @@ const MolstarViewer = dynamic(() => import("./components/MolstarViewer"), {
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
         <p className="text-slate-400 text-sm">Loading 3D Viewer...</p>
       </div>
+    </div>
+  ),
+});
+
+const ValidationDashboard = dynamic(() => import("./components/ValidationDashboard"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
     </div>
   ),
 });
@@ -60,9 +69,11 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
-  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "deep_research">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research">("graph");
   const [drData, setDrData] = useState<any>(null);
   const [drLoading, setDrLoading] = useState(false);
+  const [validationData, setValidationData] = useState<any>(null);
+  const [validationLoading, setValidationLoading] = useState(false);
 
   const handleDeepResearch = async () => {
     if (!graphData || graphData.nodes.length === 0) return;
@@ -102,6 +113,42 @@ export default function Home() {
         console.error("Deep Research Failed", e);
     } finally {
         setDrLoading(false);
+    }
+  };
+
+  const handleValidation = async () => {
+    if (!graphData || graphData.nodes.length === 0) return;
+    
+    const targetNode = graphData.nodes.find(n => n.type === 'Gene') || graphData.nodes[0];
+    const diseaseNode = graphData.nodes.find(n => n.type === 'Disease') || { id: "Cancer" };
+    
+    // Infer cancer type from query
+    let cancerType = diseaseNode.id;
+    if (query.toLowerCase().includes("lung")) cancerType = "Lung Cancer";
+    if (query.toLowerCase().includes("breast")) cancerType = "Breast Cancer";
+    if (query.toLowerCase().includes("melanoma")) cancerType = "Melanoma";
+    if (query.toLowerCase().includes("pancrea")) cancerType = "Pancreatic Cancer";
+    if (query.toLowerCase().includes("colorectal")) cancerType = "Colorectal Cancer";
+    
+    setValidationLoading(true);
+    setViewMode("validate");
+    
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
+      const resp = await fetch(
+        `${apiUrl}/validate?gene=${targetNode.id}&disease=${cancerType}&cancer_type=${cancerType}`
+      );
+      
+      if (resp.ok) {
+        const data = await resp.json();
+        setValidationData(data);
+      } else {
+        console.error("Validation failed:", resp.statusText);
+      }
+    } catch (e) {
+      console.error("Validation error:", e);
+    } finally {
+      setValidationLoading(false);
     }
   };
 
@@ -373,11 +420,18 @@ export default function Home() {
                 </button>
                 <div className="w-px bg-slate-200 my-1 mx-1"></div>
                 <button 
+                    onClick={() => setViewMode("validate")}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "validate" ? "bg-emerald-50 text-emerald-600 shadow-sm border border-emerald-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <Target size={16} />
+                    <span>Validate</span>
+                </button>
+                <button 
                     onClick={() => setViewMode("deep_research")}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "deep_research" ? "bg-purple-50 text-purple-600 shadow-sm border border-purple-100" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                     <FlaskConical size={16} />
-                    <span>Deep Research</span>
+                    <span>Feasibility</span>
                 </button>
             </div>
 
@@ -658,6 +712,18 @@ export default function Home() {
                                         </div>
                                     )}
                                 </div>
+                            </div>
+                        )}
+
+                        {viewMode === "validate" && (
+                            <div className="w-full h-full bg-slate-50/30">
+                                <ValidationDashboard
+                                    data={validationData}
+                                    loading={validationLoading}
+                                    onRun={handleValidation}
+                                    gene={graphData?.nodes.find(n => n.type === 'Gene')?.id}
+                                    disease={graphData?.nodes.find(n => n.type === 'Disease')?.id || "Cancer"}
+                                />
                             </div>
                         )}
 
