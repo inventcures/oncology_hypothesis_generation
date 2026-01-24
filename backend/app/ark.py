@@ -193,8 +193,15 @@ class OncoGraph:
         """
         Returns JSON-serializable graph data with layout.
         """
+        if self.graph.number_of_nodes() == 0:
+            return {"nodes": [], "links": []}
+
         pos = nx.spring_layout(self.graph, seed=42)
         data = nx.node_link_data(self.graph)
+
+        # Ensure 'links' key exists for Pydantic compatibility
+        if "links" not in data:
+            data["links"] = []
 
         for node in data["nodes"]:
             node_id = node["id"]
