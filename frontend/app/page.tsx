@@ -860,33 +860,159 @@ export default function Home() {
                                             </div>
 
                                             {/* Module B: Patents */}
-                                            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                                                <div className="flex items-center gap-2 mb-4">
-                                                    <Scale className="text-amber-500" />
-                                                    <h3 className="font-bold text-slate-700">Patent Landscape</h3>
+                                            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm col-span-2">
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <Scale className="text-amber-500" />
+                                                        <h3 className="font-bold text-slate-700">Patent Hawk - Freedom to Operate</h3>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <a href={drData.patent.google_patents_link} target="_blank" className="text-xs text-blue-600 hover:underline">Google Patents</a>
+                                                        <span className="text-slate-300">|</span>
+                                                        <a href={drData.patent.lens_link} target="_blank" className="text-xs text-blue-600 hover:underline">Lens.org</a>
+                                                    </div>
                                                 </div>
-                                                <div className="space-y-4">
-                                                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
-                                                        <span className="text-sm text-slate-600">Risk Level</span>
-                                                        <span className={`font-bold ${drData.patent.scooped_score === 'High' ? 'text-red-600' : 'text-green-600'}`}>
-                                                            {drData.patent.scooped_score}
-                                                        </span>
-                                                    </div>
-                                                    <div className="h-40 flex items-end justify-between gap-2 px-4 border-b border-slate-200 pb-2">
-                                                        {drData.patent.heatmap?.map((firm: any, i: number) => (
-                                                            <div key={i} className="flex flex-col items-center gap-1 group">
-                                                                <div 
-                                                                    className="w-8 bg-amber-400 rounded-t-sm transition-all group-hover:bg-amber-500"
-                                                                    style={{height: `${Math.min(100, firm.data.reduce((acc:any, d:any) => acc + d.count, 0) * 2)}%`}}
-                                                                ></div>
-                                                                <span className="text-[10px] text-slate-400 -rotate-45 origin-left translate-y-4 w-12 truncate">{firm.name}</span>
+                                                
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    {/* Risk Assessment */}
+                                                    <div className="space-y-4">
+                                                        {/* Scooped Score */}
+                                                        <div className={`p-4 rounded-lg border-2 ${
+                                                            drData.patent.risk_color === 'red' ? 'bg-red-50 border-red-200' :
+                                                            drData.patent.risk_color === 'amber' ? 'bg-amber-50 border-amber-200' :
+                                                            drData.patent.risk_color === 'yellow' ? 'bg-yellow-50 border-yellow-200' :
+                                                            'bg-green-50 border-green-200'
+                                                        }`}>
+                                                            <div className="flex justify-between items-center mb-2">
+                                                                <span className="text-sm font-medium text-slate-600">Scooped Score</span>
+                                                                <span className={`text-2xl font-bold ${
+                                                                    drData.patent.risk_color === 'red' ? 'text-red-600' :
+                                                                    drData.patent.risk_color === 'amber' ? 'text-amber-600' :
+                                                                    drData.patent.risk_color === 'yellow' ? 'text-yellow-600' :
+                                                                    'text-green-600'
+                                                                }`}>
+                                                                    {drData.patent.scooped_score}
+                                                                    <span className="text-sm">/100</span>
+                                                                </span>
                                                             </div>
-                                                        ))}
+                                                            <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                                                                <div 
+                                                                    className={`h-full rounded-full ${
+                                                                        drData.patent.risk_color === 'red' ? 'bg-red-500' :
+                                                                        drData.patent.risk_color === 'amber' ? 'bg-amber-500' :
+                                                                        drData.patent.risk_color === 'yellow' ? 'bg-yellow-500' :
+                                                                        'bg-green-500'
+                                                                    }`}
+                                                                    style={{ width: `${drData.patent.scooped_score}%` }}
+                                                                />
+                                                            </div>
+                                                            <p className="text-xs text-slate-500 mt-2">
+                                                                {drData.patent.risk_label}
+                                                            </p>
+                                                        </div>
+                                                        
+                                                        {/* Key Metrics */}
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <div className="bg-slate-50 p-3 rounded-lg">
+                                                                <span className="text-xs text-slate-500">Total Patents</span>
+                                                                <p className="text-xl font-bold text-slate-800">{drData.patent.total_hits || 0}</p>
+                                                            </div>
+                                                            <div className="bg-slate-50 p-3 rounded-lg">
+                                                                <span className="text-xs text-slate-500">Recent (5yr)</span>
+                                                                <p className="text-xl font-bold text-slate-800">{drData.patent.recent_filings_5y || 0}</p>
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        {/* Assessment */}
+                                                        <div className="bg-slate-50 p-3 rounded-lg">
+                                                            <span className="text-xs text-slate-500 block mb-1">Assessment</span>
+                                                            <p className="text-xs text-slate-700 leading-relaxed">
+                                                                {drData.patent.risk_assessment || drData.patent.message}
+                                                            </p>
+                                                        </div>
+                                                        
+                                                        {/* Top Competitors */}
+                                                        {drData.patent.top_competitors && drData.patent.top_competitors.length > 0 && (
+                                                            <div>
+                                                                <span className="text-xs text-slate-500 block mb-2">Top Competitors</span>
+                                                                <div className="space-y-1">
+                                                                    {drData.patent.top_competitors.slice(0, 4).map((comp: any, i: number) => (
+                                                                        <div key={i} className="flex items-center justify-between text-xs">
+                                                                            <span className="text-slate-600 truncate max-w-[120px]">{comp.name}</span>
+                                                                            <span className="font-medium text-slate-800">{comp.count} patents</span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                    <div className="pt-6 text-center">
-                                                        <a href={drData.patent.google_patents_link} target="_blank" className="text-xs text-blue-600 hover:underline">
-                                                            View {drData.patent.recent_filings_5y} recent filings on Google Patents
-                                                        </a>
+                                                    
+                                                    {/* Heatmap Visualization */}
+                                                    <div>
+                                                        <span className="text-xs text-slate-500 block mb-2">Filing Activity Heatmap (Last 6 Years)</span>
+                                                        {drData.patent.heatmap && drData.patent.heatmap.length > 0 ? (
+                                                            <div className="overflow-x-auto">
+                                                                <table className="w-full text-xs">
+                                                                    <thead>
+                                                                        <tr>
+                                                                            <th className="text-left p-1 text-slate-500 font-medium">Assignee</th>
+                                                                            {drData.patent.heatmap[0]?.data?.map((d: any) => (
+                                                                                <th key={d.year} className="text-center p-1 text-slate-500 font-medium w-10">{d.year.slice(2)}</th>
+                                                                            ))}
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {drData.patent.heatmap.map((row: any, i: number) => (
+                                                                            <tr key={i}>
+                                                                                <td className="p-1 text-slate-600 truncate max-w-[80px]" title={row.name}>{row.name}</td>
+                                                                                {row.data.map((cell: any, j: number) => {
+                                                                                    const intensity = Math.min(1, cell.count / 5);
+                                                                                    return (
+                                                                                        <td key={j} className="p-1">
+                                                                                            <div 
+                                                                                                className="w-full h-6 rounded flex items-center justify-center text-[10px] font-medium"
+                                                                                                style={{
+                                                                                                    backgroundColor: intensity > 0 
+                                                                                                        ? `rgba(245, 158, 11, ${0.2 + intensity * 0.8})` 
+                                                                                                        : '#f1f5f9',
+                                                                                                    color: intensity > 0.5 ? 'white' : '#64748b'
+                                                                                                }}
+                                                                                                title={`${row.name}: ${cell.count} patents in ${cell.year}`}
+                                                                                            >
+                                                                                                {cell.count > 0 ? cell.count : ''}
+                                                                                            </div>
+                                                                                        </td>
+                                                                                    );
+                                                                                })}
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="h-48 flex items-center justify-center bg-slate-50 rounded-lg">
+                                                                <div className="text-center">
+                                                                    <CheckCircle className="w-8 h-8 text-green-400 mx-auto mb-2" />
+                                                                    <p className="text-sm text-slate-500">No significant patent activity</p>
+                                                                    <p className="text-xs text-green-600 font-medium">White Space Opportunity</p>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                        
+                                                        {/* Sample Patents */}
+                                                        {drData.patent.sample_patents && drData.patent.sample_patents.length > 0 && (
+                                                            <div className="mt-4">
+                                                                <span className="text-xs text-slate-500 block mb-2">Recent Filings</span>
+                                                                <div className="space-y-1 max-h-24 overflow-y-auto">
+                                                                    {drData.patent.sample_patents.slice(0, 3).map((p: any, i: number) => (
+                                                                        <div key={i} className="text-xs p-2 bg-slate-50 rounded">
+                                                                            <p className="text-slate-700 truncate" title={p.title}>{p.title}</p>
+                                                                            <p className="text-slate-400">{p.assignee} | {p.date}</p>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
