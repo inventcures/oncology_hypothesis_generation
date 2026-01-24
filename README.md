@@ -40,3 +40,8 @@ The UI will run at `http://localhost:3000`.
 - **TTT Simulation:** Simulates the "adaptation" phase where the model learns from the test instance.
 - **Hypothesis Feed:** Displays generated hypotheses with Confidence and Novelty scores.
 - **Mock Knowledge Graph:** Contains basic ontology for KRAS, STK11, and Lung Cancer contexts.
+
+## Deployment
+
+Auto-deploy is configured via Railway + GitHub Integration.
+- Pushes to `main` trigger builds for `/backend` and `/frontend` independently.
