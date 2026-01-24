@@ -458,15 +458,15 @@ export default function Home() {
                                         <span className="text-slate-600 font-medium">Disease / Phenotype</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className="w-8 h-[2px] bg-slate-300"></span>
+                                        <span className="w-8 h-[3px] bg-slate-800 rounded"></span>
                                         <span className="text-slate-600 font-medium">Assoc. Strength</span>
                                     </div>
                                 </div>
 
                                 <svg className="w-full h-full" viewBox="0 0 800 600">
                                 <defs>
-                                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
-                                    <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
+                                <marker id="arrowhead" markerWidth="12" markerHeight="9" refX="26" refY="4.5" orient="auto">
+                                    <polygon points="0 0, 12 4.5, 0 9" fill="#1e293b" />
                                 </marker>
                                 </defs>
                                 {/* Links with Labels */}
@@ -481,27 +481,27 @@ export default function Home() {
                                         y1={source.y}
                                         x2={target.x}
                                         y2={target.y}
-                                        stroke="#cbd5e1"
-                                        strokeWidth={1.5}
+                                        stroke="#1e293b"
+                                        strokeWidth={3}
                                         markerEnd="url(#arrowhead)"
+                                        strokeLinecap="round"
                                     />
                                     {/* Edge Label Background */}
                                     <rect 
-                                        x={(source.x + target.x)/2 - 20} 
-                                        y={(source.y + target.y)/2 - 10} 
-                                        width="40" 
-                                        height="14" 
+                                        x={(source.x + target.x)/2 - 22} 
+                                        y={(source.y + target.y)/2 - 11} 
+                                        width="44" 
+                                        height="18" 
                                         rx="4" 
-                                        fill="white" 
-                                        opacity="0.8"
+                                        fill="#1e293b" 
                                     />
                                     {/* Edge Label Text */}
                                     <text 
                                         x={(source.x + target.x)/2} 
-                                        y={(source.y + target.y)/2} 
+                                        y={(source.y + target.y)/2 + 1} 
                                         textAnchor="middle" 
                                         dominantBaseline="middle"
-                                        className="text-[9px] fill-slate-400 font-mono"
+                                        className="text-[10px] fill-white font-bold"
                                     >
                                         {(link.weight * 100).toFixed(0)}%
                                     </text>
