@@ -7,6 +7,7 @@ import time
 from .ark import OncoGraph
 from .ttt import TTTAdapter
 from .literature import LiteratureAgent
+from .atlas import AtlasAgent
 
 app = FastAPI(
     title="Onco-TTT API", description="Backend for Oncology Test-Time Training Engine"
@@ -32,6 +33,7 @@ app.add_middleware(
 graph = OncoGraph()
 ttt_engine = TTTAdapter()
 lit_agent = LiteratureAgent()
+atlas_agent = AtlasAgent()
 
 
 # --- Data Models ---
@@ -66,10 +68,15 @@ class Paper(BaseModel):
     source: str
 
 
+class AtlasData(BaseModel):
+    cells: List[Dict[str, Any]]
+
+
 class GenerationResponse(BaseModel):
     hypotheses: List[Hypothesis]
     graph_context: GraphData
     papers: List[Paper] = []
+    atlas: AtlasData = AtlasData(cells=[])
 
 
 # --- Routes ---
@@ -100,7 +107,20 @@ async def generate_hypotheses(query: Query):
     # Fetch real papers relevant to the query to support the hypotheses
     papers = await lit_agent.search_papers(query.text, limit=6)
 
-    # 5. Hypothesis Generation (Mocked based on graph content)
+    # 5. Atlas Projection Phase
+    # Infer tissue type from query (simple heuristic) and fetch single-cell data
+    tissue_type = "lung"  # Default
+    if "melanoma" in query.text.lower():
+        tissue_type = "skin"
+    if "pancrea" in query.text.lower():
+        tissue_type = "pancreas"
+    if "colorectal" in query.text.lower():
+        tissue_type = "colon"
+
+    # Non-blocking call (or fast fetch)
+    atlas_data = atlas_agent.fetch_tumor_atlas(tissue_type, limit=300)
+
+    # 6. Hypothesis Generation (Mocked based on graph content)
     # In a real system, an LLM would generate these based on subgraph_data
 
     hypotheses = []
@@ -149,7 +169,10 @@ async def generate_hypotheses(query: Query):
         )
 
     return GenerationResponse(
-        hypotheses=hypotheses, graph_context=subgraph_data, papers=papers
+        hypotheses=hypotheses,
+        graph_context=subgraph_data,
+        papers=papers,
+        atlas=atlas_data,
     )
 
 
