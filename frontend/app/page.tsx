@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon } from "lucide-react";
+import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText } from "lucide-react";
 
 type Hypothesis = {
   id: string;
@@ -8,6 +8,18 @@ type Hypothesis = {
   confidence: number;
   verified: boolean;
   novelty_score: number;
+};
+
+type Paper = {
+  id: string;
+  title: string;
+  abstract: string;
+  authors: string;
+  year: number;
+  citations: number;
+  journal: string;
+  url: string;
+  source: string;
 };
 
 type GraphNode = {
@@ -27,10 +39,11 @@ type GraphLink = {
 export default function Home() {
   const [query, setQuery] = useState("");
   const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
+  const [papers, setPapers] = useState<Paper[]>([]);
   const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphLink[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Idle");
-  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers">("graph");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,12 +52,13 @@ export default function Home() {
     setLoading(true);
     setHypotheses([]);
     setGraphData(null);
+    setPapers([]);
     setStatus("Initializing TTT Adaptation...");
 
     try {
       // Simulate TTT phases
       setTimeout(() => setStatus("ARK Exploring Knowledge Graph..."), 1000);
-      setTimeout(() => setStatus("MEDEA Verifying Context..."), 2000);
+      setTimeout(() => setStatus("LitAgent Searching Papers..."), 2500);
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
       const res = await fetch(`${apiUrl}/generate`, {
@@ -58,6 +72,7 @@ export default function Home() {
       const data = await res.json();
       setHypotheses(data.hypotheses);
       setGraphData(data.graph_context);
+      setPapers(data.papers || []);
       setStatus("Complete");
     } catch (error) {
       console.error(error);
@@ -208,6 +223,13 @@ export default function Home() {
                 >
                     <BarChart3 size={20} />
                 </button>
+                <button 
+                    onClick={() => setViewMode("papers")}
+                    className={`p-2 rounded-md transition-colors ${viewMode === "papers" ? "bg-blue-50 text-blue-600" : "text-slate-500 hover:bg-slate-50"}`}
+                    title="Literature"
+                >
+                    <FileText size={20} />
+                </button>
             </div>
 
             <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-slate-50/30">
@@ -348,6 +370,48 @@ export default function Home() {
                                             ))}
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {viewMode === "papers" && (
+                            <div className="w-full h-full p-12 overflow-auto">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
+                                    {papers.map((p) => (
+                                        <div key={p.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow flex flex-col h-full">
+                                            <div className="mb-4">
+                                                <span className="inline-block px-2 py-1 mb-2 text-xs font-semibold text-blue-600 bg-blue-50 rounded-md">
+                                                    {p.year}
+                                                </span>
+                                                <h3 className="text-md font-bold text-slate-900 leading-snug line-clamp-2" title={p.title}>
+                                                    {p.title}
+                                                </h3>
+                                                <p className="text-xs text-slate-500 mt-1">{p.authors}</p>
+                                            </div>
+                                            
+                                            <p className="text-sm text-slate-600 mb-4 line-clamp-4 flex-1">
+                                                {p.abstract}
+                                            </p>
+                                            
+                                            <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs">
+                                                <span className="font-medium text-slate-700 truncate max-w-[120px]" title={p.journal}>{p.journal}</span>
+                                                <div className="flex gap-3">
+                                                    <span className="text-slate-500">{p.citations} Cites</span>
+                                                    {p.url && (
+                                                        <a href={p.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+                                                            Read PDF
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {papers.length === 0 && (
+                                        <div className="col-span-full text-center py-20 text-slate-400">
+                                            <FileText size={48} className="mx-auto mb-4 opacity-20" />
+                                            <p>No papers found. Try a different query.</p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}

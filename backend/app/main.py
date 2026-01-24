@@ -6,6 +6,7 @@ import time
 
 from .ark import OncoGraph
 from .ttt import TTTAdapter
+from .literature import LiteratureAgent
 
 app = FastAPI(
     title="Onco-TTT API", description="Backend for Oncology Test-Time Training Engine"
@@ -30,6 +31,7 @@ app.add_middleware(
 # --- Global State ---
 graph = OncoGraph()
 ttt_engine = TTTAdapter()
+lit_agent = LiteratureAgent()
 
 
 # --- Data Models ---
@@ -52,9 +54,22 @@ class GraphData(BaseModel):
     links: List[Dict[str, Any]]
 
 
+class Paper(BaseModel):
+    id: Optional[str]
+    title: str
+    abstract: str
+    authors: str
+    year: Optional[int]
+    citations: int
+    journal: str
+    url: Optional[str]
+    source: str
+
+
 class GenerationResponse(BaseModel):
     hypotheses: List[Hypothesis]
     graph_context: GraphData
+    papers: List[Paper] = []
 
 
 # --- Routes ---
@@ -81,12 +96,17 @@ async def generate_hypotheses(query: Query):
     # 3. Get Graph Data with Layout
     subgraph_data = graph.get_subgraph_data()
 
-    # 4. Hypothesis Generation (Mocked based on graph content)
+    # 4. Literature Search Phase
+    # Fetch real papers relevant to the query to support the hypotheses
+    papers = await lit_agent.search_papers(query.text, limit=6)
+
+    # 5. Hypothesis Generation (Mocked based on graph content)
     # In a real system, an LLM would generate these based on subgraph_data
 
     hypotheses = []
 
     # Check what nodes are actually in the graph now
+
     node_ids = [n["id"] for n in subgraph_data["nodes"]]
 
     # Dynamic Mocking based on graph content
@@ -128,7 +148,9 @@ async def generate_hypotheses(query: Query):
             )
         )
 
-    return GenerationResponse(hypotheses=hypotheses, graph_context=subgraph_data)
+    return GenerationResponse(
+        hypotheses=hypotheses, graph_context=subgraph_data, papers=papers
+    )
 
 
 @app.get("/health")
