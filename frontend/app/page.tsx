@@ -1138,14 +1138,119 @@ export default function Home() {
 
                                             {/* Module D: Protocol */}
                                             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                                                <div className="flex items-center gap-2 mb-4">
-                                                    <FileEdit className="text-indigo-500" />
-                                                    <h3 className="font-bold text-slate-700">Validation Protocol</h3>
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <FileEdit className="text-indigo-500" />
+                                                        <h3 className="font-bold text-slate-700">Protocol Droid</h3>
+                                                    </div>
+                                                    <span className={`text-xs px-2 py-1 rounded ${
+                                                        drData.proto.generated_by === 'LLM' 
+                                                            ? 'bg-purple-100 text-purple-700' 
+                                                            : 'bg-slate-100 text-slate-600'
+                                                    }`}>
+                                                        {drData.proto.generated_by || 'Template'}
+                                                    </span>
                                                 </div>
-                                                <div className="bg-slate-900 text-slate-300 p-4 rounded-lg font-mono text-xs h-48 overflow-y-auto whitespace-pre-wrap">
+                                                
+                                                {/* gRNA Table (for CRISPR protocols) */}
+                                                {drData.proto.grnas && drData.proto.grnas.length > 0 && (
+                                                    <div className="mb-4">
+                                                        <span className="text-xs font-semibold text-slate-600 block mb-2">
+                                                            Designed gRNA Sequences
+                                                        </span>
+                                                        <div className="overflow-x-auto">
+                                                            <table className="w-full text-[10px]">
+                                                                <thead className="bg-indigo-50 text-indigo-700">
+                                                                    <tr>
+                                                                        <th className="px-2 py-1 text-left">#</th>
+                                                                        <th className="px-2 py-1 text-left">Sequence</th>
+                                                                        <th className="px-2 py-1">GC%</th>
+                                                                        <th className="px-2 py-1">Score</th>
+                                                                        <th className="px-2 py-1">Risk</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-slate-100">
+                                                                    {drData.proto.grnas.slice(0, 3).map((grna: any, i: number) => (
+                                                                        <tr key={i} className={i === 0 ? 'bg-green-50' : ''}>
+                                                                            <td className="px-2 py-1 font-medium">{i + 1}</td>
+                                                                            <td className="px-2 py-1 font-mono">
+                                                                                <code className="bg-slate-100 px-1 rounded text-[9px]">
+                                                                                    {grna.sequence}
+                                                                                </code>
+                                                                            </td>
+                                                                            <td className="px-2 py-1 text-center">{grna.gc_content}%</td>
+                                                                            <td className="px-2 py-1 text-center">
+                                                                                <span className={`font-bold ${
+                                                                                    grna.score >= 0.7 ? 'text-green-600' :
+                                                                                    grna.score >= 0.5 ? 'text-blue-600' : 'text-amber-600'
+                                                                                }`}>
+                                                                                    {grna.score}
+                                                                                </span>
+                                                                            </td>
+                                                                            <td className="px-2 py-1 text-center">
+                                                                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium ${
+                                                                                    grna.off_target_risk === 'Low' ? 'bg-green-100 text-green-700' :
+                                                                                    grna.off_target_risk === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                                                                    'bg-red-100 text-red-700'
+                                                                                }`}>
+                                                                                    {grna.off_target_risk}
+                                                                                </span>
+                                                                            </td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                        {drData.proto.grnas.length > 0 && (
+                                                            <p className="text-[10px] text-slate-400 mt-1">
+                                                                Top gRNA: <code className="bg-slate-100 px-1 rounded">{drData.proto.grnas[0].sequence}</code>
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Timeline (for CRISPR) */}
+                                                {drData.proto.timeline && Array.isArray(drData.proto.timeline) && (
+                                                    <div className="mb-4">
+                                                        <span className="text-xs font-semibold text-slate-600 block mb-2">Timeline</span>
+                                                        <div className="flex gap-1 overflow-x-auto pb-2">
+                                                            {drData.proto.timeline.slice(0, 6).map((step: any, i: number) => (
+                                                                <div key={i} className="flex-shrink-0 w-20 text-center">
+                                                                    <div className="w-6 h-6 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto text-[10px] font-bold">
+                                                                        D{step.day}
+                                                                    </div>
+                                                                    <p className="text-[9px] text-slate-500 mt-1 leading-tight">{step.task}</p>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Protocol Content */}
+                                                <div className="bg-slate-900 text-slate-300 p-4 rounded-lg font-mono text-xs max-h-64 overflow-y-auto whitespace-pre-wrap">
                                                     {drData.proto.content}
                                                 </div>
-                                                <button className="mt-4 w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-lg transition-colors">
+                                                
+                                                {/* Reagents */}
+                                                {drData.proto.reagents && drData.proto.reagents.length > 0 && (
+                                                    <div className="mt-3">
+                                                        <span className="text-xs text-slate-500">Key Reagents: </span>
+                                                        <span className="text-xs text-slate-600">
+                                                            {drData.proto.reagents.slice(0, 4).map((r: any) => 
+                                                                typeof r === 'string' ? r : r.name
+                                                            ).join(', ')}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                
+                                                <button 
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText(drData.proto.content);
+                                                        alert('Protocol copied to clipboard!');
+                                                    }}
+                                                    className="mt-4 w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                                                >
+                                                    <FileEdit className="w-4 h-4" />
                                                     Copy to Lab Notebook
                                                 </button>
                                             </div>

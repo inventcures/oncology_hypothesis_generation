@@ -224,12 +224,27 @@ async def recommend_models(
 
 
 @app.get("/protocols/generate")
-def generate_protocol(method: str, gene: str, cell_line: str):
+async def generate_protocol(
+    method: str,
+    gene: str,
+    cell_line: str,
+    target_sequence: Optional[str] = None,
+    use_llm: bool = True,
+):
     """
     Module D: Protocol Droid
-    Generates experimental protocols.
+    Generates experimental protocols with gRNA design.
+
+    Args:
+        method: Experiment type (crispr, western, drug_assay, rnai, qpcr, etc.)
+        gene: Target gene symbol
+        cell_line: Cell line to use
+        target_sequence: Optional sequence for gRNA design
+        use_llm: Whether to use LLM for protocol generation (requires API key)
     """
-    return protocol_agent.generate_protocol(method, gene, cell_line)
+    return await protocol_agent.generate_protocol(
+        method, gene, cell_line, target_sequence, use_llm
+    )
 
 
 @app.get("/health")
