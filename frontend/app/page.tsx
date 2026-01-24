@@ -327,7 +327,24 @@ export default function Home() {
                 {graphData ? (
                     <>
                         {viewMode === "graph" && (
-                            <svg className="w-full h-full" viewBox="0 0 800 600">
+                            <>
+                                {/* Graph Legend */}
+                                <div className="absolute top-4 right-6 bg-white/90 p-3 rounded-lg border border-slate-200 shadow-sm text-xs space-y-2 z-10">
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-3 h-3 rounded-full bg-blue-500"></span>
+                                        <span className="text-slate-600 font-medium">Gene / Target</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-3 h-3 rounded-full bg-red-500"></span>
+                                        <span className="text-slate-600 font-medium">Disease / Phenotype</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-8 h-[2px] bg-slate-300"></span>
+                                        <span className="text-slate-600 font-medium">Assoc. Strength</span>
+                                    </div>
+                                </div>
+
+                                <svg className="w-full h-full" viewBox="0 0 800 600">
                                 <defs>
                                 <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
                                     <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
