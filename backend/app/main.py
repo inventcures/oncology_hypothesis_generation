@@ -208,12 +208,19 @@ async def check_patents(gene: str, disease: str = "Cancer"):
 
 
 @app.get("/models/recommend")
-async def recommend_models(tissue: str, mutation: Optional[str] = None):
+async def recommend_models(
+    tissue: str, mutation: Optional[str] = None, exclude_problematic: bool = True
+):
     """
     Module C: Model Matchmaker
     Finds the best cell line 'avatar' for the experiment.
+
+    Args:
+        tissue: Target tissue type (e.g., "lung", "breast", "colon")
+        mutation: Optional mutation filter (e.g., "KRAS G12C")
+        exclude_problematic: Whether to deprioritize known problematic lines
     """
-    return await model_agent.find_models(tissue, mutation)
+    return await model_agent.find_models(tissue, mutation, exclude_problematic)
 
 
 @app.get("/protocols/generate")

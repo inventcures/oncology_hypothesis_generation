@@ -1019,30 +1019,121 @@ export default function Home() {
 
                                             {/* Module C: Models */}
                                             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                                                <div className="flex items-center gap-2 mb-4">
-                                                    <Microscope className="text-emerald-500" />
-                                                    <h3 className="font-bold text-slate-700">Recommended Models</h3>
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <Microscope className="text-emerald-500" />
+                                                        <h3 className="font-bold text-slate-700">Model Matchmaker</h3>
+                                                    </div>
+                                                    {drData.models?.total_found && (
+                                                        <span className="text-xs text-slate-400">{drData.models.total_found} models found</span>
+                                                    )}
                                                 </div>
-                                                <div className="overflow-x-auto">
-                                                    <table className="w-full text-sm text-left">
-                                                        <thead className="text-xs text-slate-500 bg-slate-50 uppercase">
+                                                
+                                                {/* Top Pick */}
+                                                {drData.models?.top_pick && (
+                                                    <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <span className="text-xs font-semibold text-emerald-700 uppercase">Top Pick</span>
+                                                            <span className="text-lg font-bold text-emerald-600">{drData.models.top_pick.match_score}%</span>
+                                                        </div>
+                                                        <div className="flex items-center justify-between">
+                                                            <div>
+                                                                <p className="font-bold text-slate-800">{drData.models.top_pick.name}</p>
+                                                                <p className="text-xs text-slate-500">{drData.models.top_pick.disease}</p>
+                                                            </div>
+                                                            {drData.models.top_pick.mutation_match === "Exact" && (
+                                                                <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-medium rounded">
+                                                                    Exact Mutation Match
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {drData.models.top_pick.mutations && drData.models.top_pick.mutations.length > 0 && (
+                                                            <div className="mt-2 flex flex-wrap gap-1">
+                                                                {drData.models.top_pick.mutations.slice(0, 3).map((mut: string, i: number) => (
+                                                                    <span key={i} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
+                                                                        {mut}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Recommendations Table */}
+                                                <div className="overflow-x-auto max-h-48">
+                                                    <table className="w-full text-xs text-left">
+                                                        <thead className="text-[10px] text-slate-500 bg-slate-50 uppercase sticky top-0">
                                                             <tr>
-                                                                <th className="px-3 py-2">Cell Line</th>
-                                                                <th className="px-3 py-2">Tissue</th>
-                                                                <th className="px-3 py-2">Match</th>
+                                                                <th className="px-2 py-2">Cell Line</th>
+                                                                <th className="px-2 py-2">Disease</th>
+                                                                <th className="px-2 py-2">Data</th>
+                                                                <th className="px-2 py-2">Score</th>
                                                             </tr>
                                                         </thead>
-                                                        <tbody>
-                                                            {drData.models.slice(0, 3).map((m: any) => (
-                                                                <tr key={m.id} className="border-b border-slate-100">
-                                                                    <td className="px-3 py-2 font-medium">{m.name}</td>
-                                                                    <td className="px-3 py-2 text-slate-500">{m.tissue}</td>
-                                                                    <td className="px-3 py-2 text-green-600 font-bold">{(m.match_score * 100).toFixed(0)}%</td>
+                                                        <tbody className="divide-y divide-slate-100">
+                                                            {(drData.models?.recommendations || drData.models || []).slice(0, 6).map((m: any, i: number) => (
+                                                                <tr key={m.name || i} className={`${m.is_problematic ? 'bg-red-50/50' : 'hover:bg-slate-50'}`}>
+                                                                    <td className="px-2 py-2">
+                                                                        <div className="flex items-center gap-1">
+                                                                            <span className="font-medium text-slate-700">{m.name}</span>
+                                                                            {m.is_problematic && (
+                                                                                <AlertTriangle className="w-3 h-3 text-amber-500" />
+                                                                            )}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="px-2 py-2 text-slate-500 truncate max-w-[100px]" title={m.disease}>
+                                                                        {m.disease}
+                                                                    </td>
+                                                                    <td className="px-2 py-2">
+                                                                        <div className="flex gap-0.5">
+                                                                            {(m.available_data || []).slice(0, 4).map((d: string, j: number) => (
+                                                                                <span key={j} className="w-4 h-4 bg-blue-100 text-blue-600 rounded text-[8px] flex items-center justify-center" title={d}>
+                                                                                    {d[0]}
+                                                                                </span>
+                                                                            ))}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="px-2 py-2">
+                                                                        <span className={`font-bold ${
+                                                                            m.match_score >= 80 ? 'text-emerald-600' :
+                                                                            m.match_score >= 60 ? 'text-blue-600' :
+                                                                            'text-slate-500'
+                                                                        }`}>
+                                                                            {m.match_score || Math.round((m.match_score || 0.8) * 100)}%
+                                                                        </span>
+                                                                    </td>
                                                                 </tr>
                                                             ))}
                                                         </tbody>
                                                     </table>
                                                 </div>
+                                                
+                                                {/* Avoid List */}
+                                                {drData.models?.avoid_list && drData.models.avoid_list.length > 0 && (
+                                                    <div className="mt-4 p-2 bg-amber-50 border border-amber-100 rounded-lg">
+                                                        <span className="text-xs font-semibold text-amber-700 flex items-center gap-1 mb-1">
+                                                            <AlertTriangle className="w-3 h-3" />
+                                                            Lines to Avoid
+                                                        </span>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {drData.models.avoid_list.slice(0, 3).map((line: any, i: number) => (
+                                                                <span key={i} className="text-[10px] text-amber-700" title={line.problem_info?.issue}>
+                                                                    {line.name}
+                                                                    {i < 2 && ", "}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Notes */}
+                                                {drData.models?.notes && drData.models.notes.length > 0 && (
+                                                    <div className="mt-3 space-y-1">
+                                                        {drData.models.notes.slice(0, 2).map((note: string, i: number) => (
+                                                            <p key={i} className="text-[10px] text-slate-500">{note}</p>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </div>
 
                                             {/* Module D: Protocol */}
