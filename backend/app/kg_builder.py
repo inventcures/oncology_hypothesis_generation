@@ -111,13 +111,17 @@ def _normalise_type(raw: str) -> str:
     return mapping.get(raw, raw.lower().replace(" ", "_"))
 
 
-def _entity_text(item: Any) -> str:
+def entity_text(item: Any) -> str:
     """Extract text string from various GLiNER2 output formats."""
     if isinstance(item, str):
         return item
     if isinstance(item, dict):
         return item.get("text", str(item))
     return str(item)
+
+
+# Backward-compatible alias
+_entity_text = entity_text
 
 
 def _entity_confidence(item: Any) -> float:

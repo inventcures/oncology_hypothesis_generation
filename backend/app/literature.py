@@ -1,7 +1,10 @@
 import httpx
 import asyncio
+import logging
 import os
 from typing import List, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 SEMANTIC_SCHOLAR_API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 SEMANTIC_SCHOLAR_PAPER_URL = "https://api.semanticscholar.org/graph/v1/paper"
@@ -53,10 +56,10 @@ class LiteratureAgent:
                 papers.sort(key=lambda x: x.get("citations", 0), reverse=True)
                 return papers
             else:
-                print(f"SS Search Error: {resp.status_code} - {resp.text}")
+                logger.error("SS Search Error: %s - %s", resp.status_code, resp.text)
                 return []
         except Exception as e:
-            print(f"Literature Search Exception: {e}")
+            logger.exception("Literature Search Exception: %s", e)
             return []
 
     async def get_paper_details(self, paper_id: str) -> Optional[Dict]:
@@ -75,7 +78,7 @@ class LiteratureAgent:
             if resp.status_code == 200:
                 return resp.json()
         except Exception as e:
-            print(f"Paper details error: {e}")
+            logger.error("Paper details error: %s", e)
 
         return None
 
@@ -95,7 +98,7 @@ class LiteratureAgent:
                 data = resp.json()
                 return [c.get("citingPaper", {}) for c in data.get("data", [])]
         except Exception as e:
-            print(f"Citations error: {e}")
+            logger.error("Citations error: %s", e)
 
         return []
 
@@ -115,7 +118,7 @@ class LiteratureAgent:
                 data = resp.json()
                 return [r.get("citedPaper", {}) for r in data.get("data", [])]
         except Exception as e:
-            print(f"References error: {e}")
+            logger.error("References error: %s", e)
 
         return []
 
@@ -146,7 +149,7 @@ class LiteratureAgent:
                         papers_data = papers_resp.json()
                         return self._format_papers(papers_data.get("data", []))
         except Exception as e:
-            print(f"Author search error: {e}")
+            logger.error("Author search error: %s", e)
 
         return []
 

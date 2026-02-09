@@ -209,7 +209,8 @@ export default function MolstarViewer({
         }
       }
     };
-  }, [pdbContent, pockets, mutationAnalysis, bindingResidues]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdbContent]);
 
   return (
     <div className="relative w-full h-full min-h-[300px] bg-slate-900 rounded-lg overflow-hidden">

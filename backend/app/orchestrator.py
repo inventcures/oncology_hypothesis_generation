@@ -15,6 +15,8 @@ import os
 import json
 import hashlib
 import asyncio
+import logging
+import threading
 from typing import Dict, List, Any, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -159,6 +161,7 @@ class SemanticCache:
         self.max_size = max_size
         self.hits = 0
         self.misses = 0
+        self._lock = threading.Lock()
 
     def _normalize_key(self, tool: str, params: Dict) -> str:
         """Create normalized cache key"""
@@ -180,78 +183,71 @@ class SemanticCache:
         """
         Get cached result, optionally with fuzzy matching.
         """
-        key = self._normalize_key(tool, params)
+        with self._lock:
+            key = self._normalize_key(tool, params)
 
-        # Exact match first
-        if key in self.cache:
-            entry = self.cache[key]
-            if not entry.is_expired:
-                # Move to end (most recently used)
-                self.cache.move_to_end(key)
-                self.hits += 1
-                return entry.data
-            else:
-                # Expired, remove
-                del self.cache[key]
+            # Exact match first
+            if key in self.cache:
+                entry = self.cache[key]
+                if not entry.is_expired:
+                    # Move to end (most recently used)
+                    self.cache.move_to_end(key)
+                    self.hits += 1
+                    return entry.data
+                else:
+                    # Expired, remove
+                    del self.cache[key]
 
-        # Fuzzy match (same tool, similar params)
-        if fuzzy:
-            query_keywords = self._extract_keywords(params)
-            best_match = None
-            best_score = 0
+            # Fuzzy match (same tool, similar params)
+            if fuzzy:
+                query_keywords = self._extract_keywords(params)
+                best_match = None
+                best_score = 0
 
-            for cached_key, entry in self.cache.items():
-                if entry.is_expired:
-                    continue
-                if not cached_key.startswith(f"{tool}:"):
-                    continue
+                for cached_key, entry in self.cache.items():
+                    if entry.is_expired:
+                        continue
+                    if not cached_key.startswith(f"{tool}:"):
+                        continue
 
-                # Simple Jaccard similarity
-                try:
-                    cached_params = json.loads(
-                        list(self.cache.keys())[
-                            list(self.cache.values()).index(entry)
-                        ].split(":", 1)[1]
-                        if ":" in cached_key
-                        else "{}"
+                    # Extract keywords from stored params
+                    cached_keywords = self._extract_keywords(
+                        entry.data.get("_params", {})
                     )
-                except:
-                    continue
+                    if not cached_keywords:
+                        continue
 
-                cached_keywords = self._extract_keywords(entry.data.get("_params", {}))
-                if not cached_keywords:
-                    continue
+                    intersection = len(query_keywords & cached_keywords)
+                    union = len(query_keywords | cached_keywords)
+                    score = intersection / union if union > 0 else 0
 
-                intersection = len(query_keywords & cached_keywords)
-                union = len(query_keywords | cached_keywords)
-                score = intersection / union if union > 0 else 0
+                    if score > 0.8 and score > best_score:  # 80% similarity threshold
+                        best_score = score
+                        best_match = entry.data
 
-                if score > 0.8 and score > best_score:  # 80% similarity threshold
-                    best_score = score
-                    best_match = entry.data
+                if best_match:
+                    self.hits += 1
+                    return best_match
 
-            if best_match:
-                self.hits += 1
-                return best_match
-
-        self.misses += 1
-        return None
+            self.misses += 1
+            return None
 
     def set(self, tool: str, params: Dict, data: Any, ttl: int = 3600):
         """Store result in cache"""
-        key = self._normalize_key(tool, params)
+        with self._lock:
+            key = self._normalize_key(tool, params)
 
-        # Store params for fuzzy matching
-        data_with_meta = data.copy() if isinstance(data, dict) else {"_data": data}
-        data_with_meta["_params"] = params
+            # Store params for fuzzy matching
+            data_with_meta = data.copy() if isinstance(data, dict) else {"_data": data}
+            data_with_meta["_params"] = params
 
-        self.cache[key] = CacheEntry(
-            data=data_with_meta, timestamp=datetime.now(), ttl_seconds=ttl
-        )
+            self.cache[key] = CacheEntry(
+                data=data_with_meta, timestamp=datetime.now(), ttl_seconds=ttl
+            )
 
-        # Evict oldest if over capacity
-        while len(self.cache) > self.max_size:
-            self.cache.popitem(last=False)
+            # Evict oldest if over capacity
+            while len(self.cache) > self.max_size:
+                self.cache.popitem(last=False)
 
     def stats(self) -> Dict:
         """Return cache statistics"""
@@ -405,7 +401,7 @@ You may call multiple tools if the query requires multiple types of information.
             }
 
         except Exception as e:
-            print(f"Orchestrator error: {e}")
+            logging.getLogger(__name__).error("Orchestrator error: %s", e)
             return await self._fallback_all_tools(query, context)
 
     async def _execute_tool(self, tool_name: str, params: Dict) -> Any:
@@ -463,6 +459,7 @@ You may call multiple tools if the query requires multiple types of information.
 
         try:
             from .entity_extraction import get_extractor
+            from .kg_builder import entity_text
 
             extractor = get_extractor()
             extraction = extractor.extract_entities(query)
@@ -471,16 +468,12 @@ You may call multiple tools if the query requires multiple types of information.
             # Pick the best gene
             genes = entities.get("gene", [])
             if genes:
-                top = genes[0]
-                gene = top if isinstance(top, str) else top.get("text", "UNKNOWN")
+                gene = entity_text(genes[0]) or "UNKNOWN"
 
             # Pick the best disease
             diseases = entities.get("disease", [])
             if diseases:
-                top_d = diseases[0]
-                disease = (
-                    top_d if isinstance(top_d, str) else top_d.get("text", "cancer")
-                )
+                disease = entity_text(diseases[0]) or "cancer"
         except Exception:
             # GLiNER2 unavailable, fall back to regex
             import re
@@ -504,16 +497,16 @@ You may call multiple tools if the query requires multiple types of information.
         # Call literature search
         try:
             results["literature"] = await self.literature_fn(query, 10)
-        except:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning("Literature search failed: %s", e)
 
         # Call validation checks
         try:
             results["validation"] = await self.validation_agent.validate_hypothesis(
                 gene, disease
             )
-        except:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning("Validation fallback failed: %s", e)
 
         return {
             "results": results,

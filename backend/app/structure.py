@@ -1,4 +1,5 @@
 import httpx
+import logging
 import os
 import numpy as np
 from typing import List, Dict, Optional, Tuple
@@ -11,6 +12,8 @@ from scipy.spatial import ConvexHull, Delaunay
 from scipy.cluster.hierarchy import fcluster, linkage
 from collections import defaultdict
 import re
+
+logger = logging.getLogger(__name__)
 
 
 class StructureAgent:
@@ -50,7 +53,7 @@ class StructureAgent:
                 if data.get("results"):
                     return data["results"][0]["primaryAccession"]
             except Exception as e:
-                print(f"Uniprot Search Error: {e}")
+                logger.error("Uniprot Search Error: %s", e)
         return None
 
     async def fetch_structure(
@@ -319,7 +322,7 @@ class StructureAgent:
                 try:
                     hull = ConvexHull(pocket_coords)
                     volume = hull.volume
-                except:
+                except Exception:
                     volume = len(all_residues) * 150  # Rough estimate
             else:
                 volume = len(all_residues) * 150

@@ -1,9 +1,12 @@
 import httpx
+import logging
 import os
 import re
 import hashlib
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -380,7 +383,7 @@ class ProtocolAgent:
                             return seq_resp.text[:3000]  # First 3kb
 
             except Exception as e:
-                print(f"Ensembl API error: {e}")
+                logger.error("Ensembl API error: %s", e)
 
         return None
 
@@ -441,7 +444,7 @@ Format as clean markdown suitable for a lab notebook."""
                     return resp.json()["choices"][0]["message"]["content"]
 
             except Exception as e:
-                print(f"OpenAI API error: {e}")
+                logger.error("OpenAI API error: %s", e)
 
         return None
 
@@ -468,7 +471,7 @@ Format as clean markdown suitable for a lab notebook."""
                     return resp.json()["content"][0]["text"]
 
             except Exception as e:
-                print(f"Anthropic API error: {e}")
+                logger.error("Anthropic API error: %s", e)
 
         return None
 

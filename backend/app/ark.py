@@ -234,11 +234,9 @@ class OncoGraph:
                 for gene_item in self._last_extraction.get("entities", {}).get(
                     "gene", []
                 ):
-                    gname = (
-                        gene_item
-                        if isinstance(gene_item, str)
-                        else gene_item.get("text", "")
-                    )
+                    from .kg_builder import entity_text
+
+                    gname = entity_text(gene_item)
                     if gname and gname != seed_name:
                         self.kg_builder.add_pathway_enrichment(gname)
 

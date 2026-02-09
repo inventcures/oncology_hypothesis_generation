@@ -1,7 +1,10 @@
 import httpx
+import logging
 from typing import List, Dict, Optional, Any
 from collections import defaultdict
 import re
+
+logger = logging.getLogger(__name__)
 
 
 class ModelAgent:
@@ -230,7 +233,7 @@ class ModelAgent:
                         )
 
             except Exception as e:
-                print(f"Cellosaurus API error: {e}")
+                logger.error("Cellosaurus API error: %s", e)
 
         return candidates
 
@@ -288,7 +291,7 @@ class ModelAgent:
                         )
 
             except Exception as e:
-                print(f"DepMap API error: {e}")
+                logger.error("DepMap API error: %s", e)
 
                 # Fallback: Return some well-known cancer cell lines
                 fallback_lines = self._get_fallback_lines(tissue, gene)

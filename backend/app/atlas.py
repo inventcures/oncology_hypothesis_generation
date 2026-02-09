@@ -1,8 +1,11 @@
 import cellxgene_census
+import logging
 import tiledbsoma as soma
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 
 class AtlasAgent:
@@ -14,7 +17,7 @@ class AtlasAgent:
         Fetches single-cell embeddings and metadata for a specific tissue.
         Returns a simplified dictionary for frontend visualization.
         """
-        print(f"Connecting to CELLxGENE Census ({self.census_version})...")
+        logger.info("Connecting to CELLxGENE Census (%s)...", self.census_version)
 
         try:
             with cellxgene_census.open_soma(
@@ -24,7 +27,7 @@ class AtlasAgent:
                 # Filter for primary tumor if possible, otherwise just the tissue
                 obs_value_filter = f"tissue_general == '{tissue}'"
 
-                print(f"Querying for {tissue}...")
+                logger.info("Querying for %s...", tissue)
 
                 # Fetch obs (metadata) and embeddings (obsm)
                 # Note: This is a heavy operation, so we limit significantly for the prototype
@@ -46,7 +49,7 @@ class AtlasAgent:
                 )
 
                 if obs_df.empty:
-                    print(f"No cells found for tissue: {tissue}")
+                    logger.info("No cells found for tissue: %s", tissue)
                     return {"cells": []}
 
                 # Subsample for the frontend
@@ -59,7 +62,7 @@ class AtlasAgent:
                 # because running UMAP on the fly on a standard server is too slow/heavy.
                 # In a real production app, we would pre-compute these or fetch from a specific dataset.
 
-                print(f"Fetched {len(obs_df)} cells. Generating projection...")
+                logger.info("Fetched %d cells. Generating projection...", len(obs_df))
 
                 cells = []
                 # Mocking UMAP generation based on cell types to create clusters
@@ -93,7 +96,7 @@ class AtlasAgent:
                 return {"cells": cells}
 
         except Exception as e:
-            print(f"Atlas Error: {e}")
+            logger.error("Atlas Error: %s", e)
             return {"cells": [], "error": str(e)}
 
 

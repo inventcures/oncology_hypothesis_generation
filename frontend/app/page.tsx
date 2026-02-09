@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle } from "lucide-react";
 
@@ -89,6 +89,96 @@ type GraphStats = {
   sources: Record<string, number>;
 };
 
+type PocketData = {
+  id: string;
+  name: string;
+  color: string;
+  center: number[];
+  residue_ids: number[];
+  druggability_score: number;
+  druggability_label: string;
+};
+
+type StructureResult = {
+  uniprot_id?: string;
+  pdb_url?: string;
+  pdb_content?: string;
+  pockets?: PocketData[];
+  druggability_score: number;
+  binding_site_residues?: number[];
+  mutation_analysis?: {
+    found: boolean;
+    position?: number;
+    wt_aa?: string;
+    mut_aa?: string;
+    coordinate?: number[];
+    in_binding_pocket?: boolean;
+    impact_assessment?: string;
+    impact_score?: number;
+    message?: string;
+  };
+  analysis?: {
+    residue_count: number;
+    avg_plddt?: number;
+    high_confidence_pct?: number;
+  };
+  error?: string;
+};
+
+type PatentResult = {
+  scooped_score: number;
+  risk_color: string;
+  risk_label: string;
+  risk_assessment?: string;
+  message?: string;
+  total_hits?: number;
+  recent_filings_5y?: number;
+  google_patents_link: string;
+  lens_link: string;
+  top_competitors?: { name: string; count: number }[];
+  heatmap?: { name: string; data: { year: string; count: number }[] }[];
+  sample_patents?: { title: string; assignee: string; date: string }[];
+};
+
+type ModelResult = {
+  total_found?: number;
+  top_pick?: {
+    name: string;
+    disease: string;
+    match_score: number;
+    mutation_match?: string;
+    mutations?: string[];
+  };
+  recommendations?: any[];
+  avoid_list?: { name: string; problem_info?: { issue: string } }[];
+  notes?: string[];
+};
+
+type ProtocolResult = {
+  content: string;
+  generated_by?: string;
+  grnas?: {
+    sequence: string;
+    gc_content: number;
+    score: number;
+    off_target_risk: string;
+  }[];
+  timeline?: { day: number; task: string }[];
+  reagents?: (string | { name: string })[];
+};
+
+type DeepResearchData = {
+  struct: StructureResult;
+  patent: PatentResult;
+  models: ModelResult;
+  proto: ProtocolResult;
+  target: string;
+  mutation: string | null;
+  tissue: string;
+};
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
@@ -101,20 +191,20 @@ export default function Home() {
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
   const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research">("graph");
-  const [drData, setDrData] = useState<any>(null);
+  const [drData, setDrData] = useState<DeepResearchData | null>(null);
   const [drLoading, setDrLoading] = useState(false);
   const [validationData, setValidationData] = useState<any>(null);
   const [validationLoading, setValidationLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [drError, setDrError] = useState<string | null>(null);
 
-  const showToast = (msg: string) => {
+  const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
 
   // --- Export helpers ---
-  const exportCSV = () => {
+  const exportCSV = useCallback(() => {
     if (!graphData) return;
     const header = "Entity,Type,Confidence,Source";
     const rows = graphData.nodes.map(n =>
@@ -127,9 +217,9 @@ export default function Home() {
     a.href = url; a.download = `onco-ttt-entities-${Date.now()}.csv`;
     a.click(); URL.revokeObjectURL(url);
     showToast("CSV exported successfully");
-  };
+  }, [graphData, showToast]);
 
-  const exportBibTeX = () => {
+  const exportBibTeX = useCallback(() => {
     if (!papers.length) return;
     const entries = papers.map((p, i) => {
       const key = `paper${i + 1}_${p.year || 'nd'}`;
@@ -148,10 +238,10 @@ export default function Home() {
     a.href = url; a.download = `onco-ttt-papers-${Date.now()}.bib`;
     a.click(); URL.revokeObjectURL(url);
     showToast("BibTeX exported successfully");
-  };
+  }, [papers, showToast]);
 
   // --- Tissue inference helper ---
-  const inferTissue = (): string => {
+  const inferTissue = useCallback((): string => {
     const q = query.toLowerCase();
     if (q.includes("melanoma") || q.includes("skin")) return "skin";
     if (q.includes("breast")) return "breast";
@@ -163,14 +253,14 @@ export default function Home() {
     if (q.includes("ovarian") || q.includes("ovary")) return "ovary";
     if (q.includes("renal") || q.includes("kidney")) return "kidney";
     return "lung"; // default
-  };
+  }, [query]);
 
-  const handleDeepResearch = async () => {
+  const handleDeepResearch = useCallback(async () => {
     if (!graphData || graphData.nodes.length === 0) return;
     
     // Naive heuristic: Pick the first Gene node as the target
-    const targetNode = graphData.nodes.find(n => n.type === 'Gene') || graphData.nodes[0];
-    const diseaseNode = graphData.nodes.find(n => n.type === 'Disease') || { id: "Cancer" };
+    const targetNode = graphData.nodes.find(n => n.type.toLowerCase() === 'gene') || graphData.nodes[0];
+    const diseaseNode = graphData.nodes.find(n => n.type.toLowerCase() === 'disease') || { id: "Cancer" };
     
     // Extract mutation from query if present (e.g., "G12C", "V600E")
     const mutationMatch = query.match(/([A-Z]\d+[A-Z])/i);
@@ -179,7 +269,7 @@ export default function Home() {
     setDrLoading(true);
     setDrError(null);
     try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
+        const apiUrl = API_URL;
         const tissue = inferTissue();
         
         // Build structure URL with mutation if present
@@ -207,13 +297,13 @@ export default function Home() {
     } finally {
         setDrLoading(false);
     }
-  };
+  }, [graphData, query, inferTissue]);
 
-  const handleValidation = async () => {
+  const handleValidation = useCallback(async () => {
     if (!graphData || graphData.nodes.length === 0) return;
     
-    const targetNode = graphData.nodes.find(n => n.type === 'Gene') || graphData.nodes[0];
-    const diseaseNode = graphData.nodes.find(n => n.type === 'Disease') || { id: "Cancer" };
+    const targetNode = graphData.nodes.find(n => n.type.toLowerCase() === 'gene') || graphData.nodes[0];
+    const diseaseNode = graphData.nodes.find(n => n.type.toLowerCase() === 'disease') || { id: "Cancer" };
     
     // Infer cancer type from query
     let cancerType = diseaseNode.id;
@@ -227,7 +317,7 @@ export default function Home() {
     setViewMode("validate");
     
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
+      const apiUrl = API_URL;
       const resp = await fetch(
         `${apiUrl}/validate?gene=${targetNode.id}&disease=${cancerType}&cancer_type=${cancerType}`
       );
@@ -243,9 +333,9 @@ export default function Home() {
     } finally {
       setValidationLoading(false);
     }
-  };
+  }, [graphData, query]);
 
-  const handleSubmit = async (e?: React.FormEvent, overrideQuery?: string) => {
+  const handleSubmit = useCallback(async (e?: React.FormEvent, overrideQuery?: string) => {
     if (e) e.preventDefault();
     const textToSearch = overrideQuery || query;
     if (!textToSearch) return;
@@ -265,7 +355,7 @@ export default function Home() {
       setTimeout(() => setStatus("Connecting biological relationships..."), 1800);
       setTimeout(() => setStatus("Finding relevant research papers..."), 2800);
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -285,13 +375,13 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [query]);
 
-  const handleExampleClick = (text: string) => {
+  const handleExampleClick = useCallback((text: string) => {
     handleSubmit(undefined, text);
-  };
+  }, [handleSubmit]);
 
-  const getNodeColor = (node: GraphNode | { type: string; color?: string }) => {
+  const getNodeColor = useMemo(() => (node: GraphNode | { type: string; color?: string }) => {
     // Use backend-provided color if available, else fallback
     if ('color' in node && node.color) return node.color;
     const fallbacks: Record<string, string> = {
@@ -305,7 +395,7 @@ export default function Home() {
       mechanism: "#6366f1", Mechanism: "#6366f1",
     };
     return fallbacks[node.type] || "#9ca3af";
-  };
+  }, []);
 
   return (
     <main className="flex min-h-screen flex-col bg-slate-50 text-slate-900 font-sans">
@@ -575,11 +665,7 @@ export default function Home() {
 
             <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-slate-50/30">
                 {/* Background Grid */}
-                <div className="absolute inset-0 grid grid-cols-[repeat(40,minmax(0,1fr))] opacity-[0.03] pointer-events-none">
-                    {Array.from({ length: 1600 }).map((_, i) => (
-                    <div key={i} className="border-r border-b border-slate-900" />
-                    ))}
-                </div>
+                <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent calc(100% / 40 - 1px), #0f172a calc(100% / 40 - 1px), #0f172a calc(100% / 40)), repeating-linear-gradient(0deg, transparent, transparent calc(100% / 40 - 1px), #0f172a calc(100% / 40 - 1px), #0f172a calc(100% / 40))' }} />
             
                 {graphData ? (
                     <>
@@ -642,10 +728,10 @@ export default function Home() {
 
                                 <svg className="w-full h-full" viewBox="0 0 800 600">
                                 <defs>
-                                    {/* Per-edge colored arrowheads */}
-                                    {graphData.links.map((link, i) => (
-                                        <marker key={`arrow-${i}`} id={`arrow-${i}`} markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
-                                            <polygon points="0 0, 10 4, 0 8" fill={hoveredEdge === i ? link.color : `${link.color}cc`} />
+                                    {/* Color-deduplicated arrowheads */}
+                                    {Array.from(new Set(graphData.links.map(l => l.color || '#94a3b8'))).map((color) => (
+                                        <marker key={`arrow-${color}`} id={`arrow-${color.replace('#', '')}`} markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                                            <polygon points="0 0, 10 4, 0 8" fill={`${color}cc`} />
                                         </marker>
                                     ))}
                                     {/* Default arrowhead fallback */}
@@ -717,7 +803,7 @@ export default function Home() {
                                                 stroke={edgeColor}
                                                 strokeWidth={isHovered ? thickness + 1.5 : thickness}
                                                 strokeOpacity={isDimmed ? 0.15 : isHovered ? 1 : 0.7}
-                                                markerEnd={`url(#arrow-${i})`}
+                                                markerEnd={`url(#arrow-${(link.color || '#94a3b8').replace('#', '')})`}
                                                 strokeLinecap="round"
                                                 className="transition-all duration-200"
                                             />
@@ -1074,8 +1160,8 @@ export default function Home() {
                                     data={validationData}
                                     loading={validationLoading}
                                     onRun={handleValidation}
-                                    gene={graphData?.nodes.find(n => n.type === 'Gene')?.id}
-                                    disease={graphData?.nodes.find(n => n.type === 'Disease')?.id || "Cancer"}
+                                    gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
+                                    disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
                                 />
                             </div>
                         )}
@@ -1166,7 +1252,7 @@ export default function Home() {
                                                             <MolstarViewer
                                                                 pdbContent={drData.struct.pdb_content}
                                                                 pockets={drData.struct.pockets || []}
-                                                                mutationAnalysis={drData.struct.mutation_analysis}
+                                                                mutationAnalysis={drData.struct.mutation_analysis as any}
                                                                 bindingResidues={drData.struct.binding_site_residues || []}
                                                             />
                                                         ) : drData.struct.error ? (
@@ -1266,7 +1352,7 @@ export default function Home() {
                                                                             <div className="flex-1 h-1.5 bg-red-100 rounded-full">
                                                                                 <div 
                                                                                     className="h-full bg-red-500 rounded-full"
-                                                                                    style={{ width: `${drData.struct.mutation_analysis.impact_score * 100}%` }}
+                                                                                    style={{ width: `${(drData.struct.mutation_analysis.impact_score ?? 0) * 100}%` }}
                                                                                 />
                                                                             </div>
                                                                         </div>
@@ -1512,7 +1598,7 @@ export default function Home() {
                                                             </tr>
                                                         </thead>
                                                         <tbody className="divide-y divide-slate-100">
-                                                            {(drData.models?.recommendations || drData.models || []).slice(0, 6).map((m: any, i: number) => (
+                                                            {(drData.models?.recommendations || []).slice(0, 6).map((m: any, i: number) => (
                                                                 <tr key={m.name || i} className={`${m.is_problematic ? 'bg-red-50/50' : 'hover:bg-slate-50'}`}>
                                                                     <td className="px-2 py-2">
                                                                         <div className="flex items-center gap-1">

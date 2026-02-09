@@ -1,9 +1,12 @@
 import httpx
+import logging
 from typing import Dict, Any, List, Optional
 from collections import defaultdict
 from datetime import datetime
 import asyncio
 import re
+
+logger = logging.getLogger(__name__)
 
 
 class PatentAgent:
@@ -180,10 +183,10 @@ class PatentAgent:
                     data = resp.json()
                     return self._parse_patentsview_response(data)
                 else:
-                    print(f"PatentsView API returned {resp.status_code}")
+                    logger.warning("PatentsView API returned %s", resp.status_code)
 
             except Exception as e:
-                print(f"PatentsView API error: {e}")
+                logger.error("PatentsView API error: %s", e)
 
         # Fallback: return empty but structured data
         return {

@@ -1,10 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
+import asyncio
 import time
 
-from .ark import OncoGraph
+from .ark import OncoGraph, OpenTargetsClient
 from .ttt import TTTAdapter
 from .literature import LiteratureAgent
 from .atlas import AtlasAgent
@@ -16,8 +17,22 @@ from .validation import ValidationAgent
 from .orchestrator import AgentOrchestrator
 from .entity_extraction import get_extractor
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    """Startup/shutdown lifecycle — properly close persistent HTTP clients."""
+    yield
+    # Shutdown: close all persistent httpx clients
+    await ot_client.client.aclose()
+    await lit_agent.client.aclose()
+
+
 app = FastAPI(
-    title="Onco-TTT API", description="Backend for Oncology Test-Time Training Engine"
+    title="Onco-TTT API",
+    description="Backend for Oncology Test-Time Training Engine",
+    lifespan=lifespan,
 )
 
 # Enable CORS for frontend
@@ -26,7 +41,6 @@ origins = [
     "https://onco-ttt-frontend.up.railway.app",
     "https://onco-hypothesis.up.railway.app",
     "https://onco-hypothesis-generation.up.railway.app",
-    "*",
 ]
 
 app.add_middleware(
@@ -38,7 +52,9 @@ app.add_middleware(
 )
 
 # --- Global State ---
-graph = OncoGraph()
+# OncoGraph is NOT global — it is created per-request to avoid concurrent state corruption.
+# Only the stateless OpenTargetsClient is shared (holds a persistent httpx connection pool).
+ot_client = OpenTargetsClient()
 ttt_engine = TTTAdapter()
 lit_agent = LiteratureAgent()
 atlas_agent = AtlasAgent()
@@ -60,7 +76,7 @@ orchestrator = AgentOrchestrator(
 
 # --- Data Models ---
 class Query(BaseModel):
-    text: str
+    text: str = Field(..., max_length=2000)
     context: Optional[str] = "General Oncology"
 
 
@@ -105,17 +121,41 @@ class GenerationResponse(BaseModel):
 
 
 class ExtractionRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=2000)
     include_relations: bool = True
     include_clinical: bool = False
     threshold: float = 0.4
 
 
 class KGBuildRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=2000)
     enrich_opentargets: bool = True
     width: float = 800
     height: float = 600
+
+
+# --- Tissue Inference (single source of truth for backend) ---
+
+TISSUE_MAP = [
+    (["melanoma", "skin"], "skin"),
+    (["breast"], "breast"),
+    (["pancrea"], "pancreas"),
+    (["colorectal", "colon"], "colon"),
+    (["brain", "glioma", "glioblastoma"], "brain"),
+    (["liver", "hepato"], "liver"),
+    (["prostate"], "prostate"),
+    (["ovarian", "ovary"], "ovary"),
+    (["renal", "kidney"], "kidney"),
+]
+
+
+def _infer_tissue(query_text: str) -> str:
+    """Infer tissue type from query text. Returns 'lung' as default."""
+    q = query_text.lower()
+    for keywords, tissue in TISSUE_MAP:
+        if any(kw in q for kw in keywords):
+            return tissue
+    return "lung"
 
 
 # --- Hypothesis Generation (dynamic, based on extracted entities & relations) ---
@@ -301,30 +341,29 @@ async def generate_hypotheses(query: Query):
     Now powered by GLiNER2 for entity extraction and rich KG creation
     with color-coded nodes, weighted edges, and relation labels.
     """
-    # 1. ARK Phase: GLiNER2 extraction + OpenTargets enrichment -> rich KG
-    await graph.build_from_query(query.text)
+    # --- Request-scoped OncoGraph (avoids concurrent state corruption) ---
+    req_graph = OncoGraph()
+    req_graph.ot_client = ot_client  # share the persistent HTTP connection pool
 
-    # 2. TTT Phase: Adapt to the query context within the fetched graph
-    relevant_nodes = ttt_engine.adapt(graph.graph, query.text)
+    # Infer tissue type from query
+    tissue_type = _infer_tissue(query.text)
+
+    # 1. Run KG build, literature search, and atlas fetch CONCURRENTLY.
+    #    Literature & Atlas have zero dependency on the knowledge graph.
+    #    Atlas is sync, so wrap in asyncio.to_thread to avoid blocking the event loop.
+    _, papers, atlas_data = await asyncio.gather(
+        req_graph.build_from_query(query.text),
+        lit_agent.search_papers(query.text, limit=6),
+        asyncio.to_thread(atlas_agent.fetch_tumor_atlas, tissue_type, 300),
+    )
+
+    # 2. TTT Phase: Propagate activations through graph (used for node ranking)
+    ttt_engine.adapt(req_graph.graph, query.text)
 
     # 3. Get Rich Graph Data with Layout, colors, edge labels
-    subgraph_data = graph.get_subgraph_data()
+    subgraph_data = req_graph.get_subgraph_data()
 
-    # 4. Literature Search Phase
-    papers = await lit_agent.search_papers(query.text, limit=6)
-
-    # 5. Atlas Projection Phase
-    tissue_type = "lung"  # Default
-    if "melanoma" in query.text.lower():
-        tissue_type = "skin"
-    if "pancrea" in query.text.lower():
-        tissue_type = "pancreas"
-    if "colorectal" in query.text.lower():
-        tissue_type = "colon"
-
-    atlas_data = atlas_agent.fetch_tumor_atlas(tissue_type, limit=300)
-
-    # 6. Hypothesis Generation — dynamically from extracted entities & relations
+    # 4. Hypothesis Generation — dynamically from extracted entities & relations
     hypotheses = _generate_hypotheses(subgraph_data, query.text)
 
     return GenerationResponse(
@@ -332,7 +371,7 @@ async def generate_hypotheses(query: Query):
         graph_context=subgraph_data,
         papers=papers,
         atlas=atlas_data,
-        extraction=graph.get_last_extraction(),
+        extraction=req_graph.get_last_extraction(),
     )
 
 
@@ -402,7 +441,6 @@ async def build_knowledge_graph(req: KGBuildRequest):
                 genes[0] if isinstance(genes[0], str) else genes[0].get("text", "")
             )
             if best_gene:
-                ot_client = graph.ot_client
                 seed = await ot_client.search_entity(best_gene)
                 if seed:
                     if seed["entity"] == "target":

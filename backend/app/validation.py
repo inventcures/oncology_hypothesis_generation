@@ -14,11 +14,14 @@ Features:
 
 import httpx
 import asyncio
+import logging
 import os
 import re
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class ValidationStatus(Enum):
@@ -42,6 +45,7 @@ class ValidationAgent:
     """
 
     def __init__(self):
+        self.client = httpx.AsyncClient(timeout=30.0)
         self.depmap_url = "https://api.cellmodelpassports.sanger.ac.uk/api/v1"
         self.cbioportal_url = "https://www.cbioportal.org/api"
         self.opentargets_url = "https://api.platform.opentargets.org/api/v4/graphql"
@@ -257,17 +261,16 @@ class ValidationAgent:
         self, gene: str, cancer_type: str
     ) -> Optional[Dict]:
         """Fetch dependency data from DepMap."""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                # Query gene dependencies
-                resp = await client.get(
-                    f"{self.depmap_url}/genes/{gene}/dependencies",
-                    params={"dataset": "crispr"},
-                )
-                if resp.status_code == 200:
-                    return resp.json()
-            except Exception as e:
-                print(f"DepMap API error: {e}")
+        try:
+            # Query gene dependencies
+            resp = await self.client.get(
+                f"{self.depmap_url}/genes/{gene}/dependencies",
+                params={"dataset": "crispr"},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception as e:
+            logger.warning("DepMap API error: %s", e)
         return None
 
     def _fallback_essentiality(self, gene: str, cancer_type: str) -> Dict:
@@ -448,20 +451,19 @@ class ValidationAgent:
         if not study_id:
             return None
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                # This is a simplified query - real implementation would need
-                # to fetch expression data and compute survival correlation
-                resp = await client.get(
-                    f"{self.cbioportal_url}/studies/{study_id}/clinical-data",
-                    params={"clinicalDataType": "PATIENT", "projection": "SUMMARY"},
-                )
-                if resp.status_code == 200:
-                    # Would need to process and compute KM curves
-                    # For now, return None to use fallback
-                    pass
-            except Exception as e:
-                print(f"cBioPortal API error: {e}")
+        try:
+            # This is a simplified query - real implementation would need
+            # to fetch expression data and compute survival correlation
+            resp = await self.client.get(
+                f"{self.cbioportal_url}/studies/{study_id}/clinical-data",
+                params={"clinicalDataType": "PATIENT", "projection": "SUMMARY"},
+            )
+            if resp.status_code == 200:
+                # Would need to process and compute KM curves
+                # For now, return None to use fallback
+                pass
+        except Exception as e:
+            logger.warning("cBioPortal API error: %s", e)
 
         return None
 
@@ -639,21 +641,20 @@ class ValidationAgent:
     async def _fetch_gtex_expression(self, gene: str) -> Optional[Dict[str, float]]:
         """Fetch gene expression from GTEx."""
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                resp = await client.get(
-                    f"{self.gtex_url}/expression/medianGeneExpression",
-                    params={"geneId": gene, "datasetId": "gtex_v8"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    # Parse response
-                    return {
-                        item["tissueSiteDetail"]: item["median"]
-                        for item in data.get("data", [])
-                    }
-            except Exception as e:
-                print(f"GTEx API error: {e}")
+        try:
+            resp = await self.client.get(
+                f"{self.gtex_url}/expression/medianGeneExpression",
+                params={"geneId": gene, "datasetId": "gtex_v8"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                # Parse response
+                return {
+                    item["tissueSiteDetail"]: item["median"]
+                    for item in data.get("data", [])
+                }
+        except Exception as e:
+            logger.warning("GTEx API error: %s", e)
 
         return None
 
@@ -1047,48 +1048,47 @@ class ValidationAgent:
     async def _fetch_clinical_trials(self, gene: str, disease: str) -> List[Dict]:
         """Fetch clinical trials from ClinicalTrials.gov."""
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                # New ClinicalTrials.gov API v2
-                params = {
-                    "query.term": f"{gene} {disease}",
-                    "filter.overallStatus": "RECRUITING,ACTIVE_NOT_RECRUITING",
-                    "pageSize": 20,
-                }
+        try:
+            # New ClinicalTrials.gov API v2
+            params = {
+                "query.term": f"{gene} {disease}",
+                "filter.overallStatus": "RECRUITING,ACTIVE_NOT_RECRUITING",
+                "pageSize": 20,
+            }
 
-                resp = await client.get(self.clinicaltrials_url, params=params)
+            resp = await self.client.get(self.clinicaltrials_url, params=params)
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    studies = data.get("studies", [])
+            if resp.status_code == 200:
+                data = resp.json()
+                studies = data.get("studies", [])
 
-                    return [
-                        {
-                            "nct_id": s.get("protocolSection", {})
-                            .get("identificationModule", {})
-                            .get("nctId"),
-                            "title": s.get("protocolSection", {})
-                            .get("identificationModule", {})
-                            .get("briefTitle"),
-                            "status": s.get("protocolSection", {})
-                            .get("statusModule", {})
-                            .get("overallStatus"),
-                            "phase": s.get("protocolSection", {})
-                            .get("designModule", {})
-                            .get("phases", [""])[0]
-                            if s.get("protocolSection", {})
-                            .get("designModule", {})
-                            .get("phases")
-                            else "",
-                            "sponsor": s.get("protocolSection", {})
-                            .get("sponsorCollaboratorsModule", {})
-                            .get("leadSponsor", {})
-                            .get("name"),
-                        }
-                        for s in studies
-                    ]
-            except Exception as e:
-                print(f"ClinicalTrials.gov API error: {e}")
+                return [
+                    {
+                        "nct_id": s.get("protocolSection", {})
+                        .get("identificationModule", {})
+                        .get("nctId"),
+                        "title": s.get("protocolSection", {})
+                        .get("identificationModule", {})
+                        .get("briefTitle"),
+                        "status": s.get("protocolSection", {})
+                        .get("statusModule", {})
+                        .get("overallStatus"),
+                        "phase": s.get("protocolSection", {})
+                        .get("designModule", {})
+                        .get("phases", [""])[0]
+                        if s.get("protocolSection", {})
+                        .get("designModule", {})
+                        .get("phases")
+                        else "",
+                        "sponsor": s.get("protocolSection", {})
+                        .get("sponsorCollaboratorsModule", {})
+                        .get("leadSponsor", {})
+                        .get("name"),
+                    }
+                    for s in studies
+                ]
+        except Exception as e:
+            logger.warning("ClinicalTrials.gov API error: %s", e)
 
         return []
 
@@ -1150,25 +1150,25 @@ Be specific, cite the key findings, and note any concerns. This will be used in 
 Write the rationale in third person, professional scientific tone. Start with the gene name."""
 
         if self.openai_key:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                try:
-                    resp = await client.post(
-                        "https://api.openai.com/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {self.openai_key}",
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "model": "gpt-4o-mini",
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 0.3,
-                            "max_tokens": 300,
-                        },
-                    )
-                    if resp.status_code == 200:
-                        return resp.json()["choices"][0]["message"]["content"]
-                except Exception as e:
-                    print(f"OpenAI error: {e}")
+            try:
+                resp = await self.client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.openai_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "gpt-4o-mini",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.3,
+                        "max_tokens": 300,
+                    },
+                    timeout=60.0,
+                )
+                if resp.status_code == 200:
+                    return resp.json()["choices"][0]["message"]["content"]
+            except Exception as e:
+                logger.error("OpenAI error: %s", e)
 
         return None
 
