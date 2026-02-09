@@ -453,20 +453,51 @@ You may call multiple tools if the query requires multiple types of information.
             return {"error": str(e)}
 
     async def _fallback_all_tools(self, query: str, context: Optional[str]) -> Dict:
-        """Fallback: call all relevant tools (when Claude unavailable)"""
-        # Extract gene/disease from query (simple heuristic)
-        import re
+        """Fallback: call all relevant tools (when Claude unavailable).
 
-        # Common gene patterns
-        gene_match = re.search(r"\b([A-Z][A-Z0-9]{2,})\b", query)
-        gene = gene_match.group(1) if gene_match else "UNKNOWN"
-
-        # Disease keywords
+        Uses GLiNER2 for entity extraction instead of regex heuristics.
+        Falls back to regex if GLiNER2 is unavailable.
+        """
+        gene = "UNKNOWN"
         disease = "cancer"
-        for d in ["lung", "breast", "melanoma", "pancreatic", "colorectal", "leukemia"]:
-            if d in query.lower():
-                disease = f"{d} cancer"
-                break
+
+        try:
+            from .entity_extraction import get_extractor
+
+            extractor = get_extractor()
+            extraction = extractor.extract_entities(query)
+            entities = extraction.get("entities", {})
+
+            # Pick the best gene
+            genes = entities.get("gene", [])
+            if genes:
+                top = genes[0]
+                gene = top if isinstance(top, str) else top.get("text", "UNKNOWN")
+
+            # Pick the best disease
+            diseases = entities.get("disease", [])
+            if diseases:
+                top_d = diseases[0]
+                disease = (
+                    top_d if isinstance(top_d, str) else top_d.get("text", "cancer")
+                )
+        except Exception:
+            # GLiNER2 unavailable, fall back to regex
+            import re
+
+            gene_match = re.search(r"\b([A-Z][A-Z0-9]{2,})\b", query)
+            gene = gene_match.group(1) if gene_match else "UNKNOWN"
+            for d in [
+                "lung",
+                "breast",
+                "melanoma",
+                "pancreatic",
+                "colorectal",
+                "leukemia",
+            ]:
+                if d in query.lower():
+                    disease = f"{d} cancer"
+                    break
 
         results = {}
 

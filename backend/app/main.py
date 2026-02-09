@@ -14,6 +14,7 @@ from .models import ModelAgent
 from .protocols import ProtocolAgent
 from .validation import ValidationAgent
 from .orchestrator import AgentOrchestrator
+from .entity_extraction import get_extractor
 
 app = FastAPI(
     title="Onco-TTT API", description="Backend for Oncology Test-Time Training Engine"
@@ -75,6 +76,8 @@ class Hypothesis(BaseModel):
 class GraphData(BaseModel):
     nodes: List[Dict[str, Any]]
     links: List[Dict[str, Any]]
+    stats: Optional[Dict[str, Any]] = None
+    legend: Optional[List[Dict[str, Any]]] = None
 
 
 class Paper(BaseModel):
@@ -98,6 +101,21 @@ class GenerationResponse(BaseModel):
     graph_context: GraphData
     papers: List[Paper] = []
     atlas: AtlasData = AtlasData(cells=[])
+    extraction: Optional[Dict[str, Any]] = None
+
+
+class ExtractionRequest(BaseModel):
+    text: str
+    include_relations: bool = True
+    include_clinical: bool = False
+    threshold: float = 0.4
+
+
+class KGBuildRequest(BaseModel):
+    text: str
+    enrich_opentargets: bool = True
+    width: float = 800
+    height: float = 600
 
 
 # --- Routes ---
@@ -112,24 +130,23 @@ def read_root():
 async def generate_hypotheses(query: Query):
     """
     Executes the ARK + TTT + MEDEA pipeline.
+
+    Now powered by GLiNER2 for entity extraction and rich KG creation
+    with color-coded nodes, weighted edges, and relation labels.
     """
-    # 1. ARK Phase: Fetch real data from OpenTargets
-    # This replaces the static mock data with a dynamic subgraph based on the query
+    # 1. ARK Phase: GLiNER2 extraction + OpenTargets enrichment -> rich KG
     await graph.build_from_query(query.text)
 
     # 2. TTT Phase: Adapt to the query context within the fetched graph
-    # (Simulated delay for "Training" visualization is now the API latency)
     relevant_nodes = ttt_engine.adapt(graph.graph, query.text)
 
-    # 3. Get Graph Data with Layout
+    # 3. Get Rich Graph Data with Layout, colors, edge labels
     subgraph_data = graph.get_subgraph_data()
 
     # 4. Literature Search Phase
-    # Fetch real papers relevant to the query to support the hypotheses
     papers = await lit_agent.search_papers(query.text, limit=6)
 
     # 5. Atlas Projection Phase
-    # Infer tissue type from query (simple heuristic) and fetch single-cell data
     tissue_type = "lung"  # Default
     if "melanoma" in query.text.lower():
         tissue_type = "skin"
@@ -138,19 +155,12 @@ async def generate_hypotheses(query: Query):
     if "colorectal" in query.text.lower():
         tissue_type = "colon"
 
-    # Non-blocking call (or fast fetch)
     atlas_data = atlas_agent.fetch_tumor_atlas(tissue_type, limit=300)
 
     # 6. Hypothesis Generation (Mocked based on graph content)
-    # In a real system, an LLM would generate these based on subgraph_data
-
     hypotheses = []
+    node_ids = [n["id"] for n in subgraph_data.get("nodes", [])]
 
-    # Check what nodes are actually in the graph now
-
-    node_ids = [n["id"] for n in subgraph_data["nodes"]]
-
-    # Dynamic Mocking based on graph content
     if any("KRAS" in nid for nid in node_ids):
         hypotheses.append(
             Hypothesis(
@@ -176,7 +186,6 @@ async def generate_hypotheses(query: Query):
         )
 
     if not hypotheses:
-        # Generic hypothesis for whatever was found
         top_node = node_ids[0] if node_ids else "Unknown"
         hypotheses.append(
             Hypothesis(
@@ -194,7 +203,111 @@ async def generate_hypotheses(query: Query):
         graph_context=subgraph_data,
         papers=papers,
         atlas=atlas_data,
+        extraction=graph.get_last_extraction(),
     )
+
+
+# --- GLiNER2 Entity Extraction Endpoint ---
+
+
+@app.post("/extract_entities")
+async def extract_entities(req: ExtractionRequest):
+    """
+    Standalone GLiNER2 entity extraction endpoint.
+
+    Extracts oncology entities (genes, diseases, drugs, pathways, mutations,
+    cell types, biomarkers, mechanisms) from arbitrary text.
+
+    Optionally includes relation extraction and clinical context parsing.
+    """
+    extractor = get_extractor()
+
+    if req.include_relations:
+        result = extractor.extract_all(req.text)
+    else:
+        result = extractor.extract_entities(req.text, threshold=req.threshold)
+
+    if req.include_clinical:
+        clinical = extractor.extract_clinical_context(req.text)
+        result["clinical_context"] = clinical.get("clinical_context", [])
+
+    return result
+
+
+# --- Knowledge Graph Build Endpoint ---
+
+
+@app.post("/build_kg")
+async def build_knowledge_graph(req: KGBuildRequest):
+    """
+    Build a rich knowledge graph from arbitrary text.
+
+    Pipeline:
+    1. GLiNER2 extracts entities & relations from text
+    2. (Optional) OpenTargets enriches with validated associations
+    3. Returns color-coded, interactive graph JSON
+
+    Response includes:
+    - nodes: with type, color, border_color, confidence, radius, glow
+    - links: with relation, label, weight, color, thickness, animated
+    - stats: total_nodes, total_edges, entity_types, relation_types
+    - legend: color-coded type legend with counts
+    """
+    from .kg_builder import KnowledgeGraphBuilder
+
+    extractor = get_extractor()
+
+    # Extract entities and relations
+    extraction = extractor.extract_all(req.text)
+
+    # Build KG
+    builder = KnowledgeGraphBuilder()
+    builder.add_entities(extraction.get("entities", {}))
+    builder.add_relations(extraction.get("relations", {}))
+
+    # OpenTargets enrichment
+    if req.enrich_opentargets:
+        genes = extraction.get("entities", {}).get("gene", [])
+        if genes:
+            best_gene = (
+                genes[0] if isinstance(genes[0], str) else genes[0].get("text", "")
+            )
+            if best_gene:
+                ot_client = graph.ot_client
+                seed = await ot_client.search_entity(best_gene)
+                if seed:
+                    if seed["entity"] == "target":
+                        neighbors = await ot_client.get_target_associations(seed["id"])
+                    else:
+                        neighbors = await ot_client.get_disease_associations(seed["id"])
+                    builder.add_opentargets_associations(
+                        seed["name"], seed["entity"], neighbors
+                    )
+                    builder.add_pathway_enrichment(best_gene)
+
+    # Serialise
+    kg_data = builder.serialise(width=req.width, height=req.height)
+    kg_data["extraction"] = extraction
+
+    return kg_data
+
+
+# --- GLiNER2 Model Info & Cache Stats ---
+
+
+@app.get("/gliner2/info")
+def gliner2_model_info():
+    """
+    Returns GLiNER2 model status and extraction cache statistics.
+    """
+    extractor = get_extractor()
+    return {
+        "model": extractor.model_info(),
+        "cache": extractor.cache_stats(),
+    }
+
+
+# --- Existing Routes (unchanged) ---
 
 
 @app.get("/structure/{gene}")
@@ -202,10 +315,6 @@ async def get_structure_analysis(gene: str, mutation: Optional[str] = None):
     """
     Module A: Virtual Structural Biologist
     Fetches AlphaFold structure and predicts binding pockets.
-
-    Args:
-        gene: Gene symbol (e.g., "KRAS", "EGFR")
-        mutation: Optional mutation string (e.g., "G12C", "V600E")
     """
     return await structure_agent.fetch_structure(gene, mutation)
 
@@ -226,11 +335,6 @@ async def recommend_models(
     """
     Module C: Model Matchmaker
     Finds the best cell line 'avatar' for the experiment.
-
-    Args:
-        tissue: Target tissue type (e.g., "lung", "breast", "colon")
-        mutation: Optional mutation filter (e.g., "KRAS G12C")
-        exclude_problematic: Whether to deprioritize known problematic lines
     """
     return await model_agent.find_models(tissue, mutation, exclude_problematic)
 
@@ -246,13 +350,6 @@ async def generate_protocol(
     """
     Module D: Protocol Droid
     Generates experimental protocols with gRNA design.
-
-    Args:
-        method: Experiment type (crispr, western, drug_assay, rnai, qpcr, etc.)
-        gene: Target gene symbol
-        cell_line: Cell line to use
-        target_sequence: Optional sequence for gRNA design
-        use_llm: Whether to use LLM for protocol generation (requires API key)
     """
     return await protocol_agent.generate_protocol(
         method, gene, cell_line, target_sequence, use_llm
@@ -266,15 +363,6 @@ async def validate_hypothesis(
     """
     v2 Validation Dashboard
     Runs comprehensive validation checks on a hypothesis.
-
-    Includes:
-    1. Essentiality (DepMap CRISPR)
-    2. Survival Impact (TCGA)
-    3. Safety Profile (GTEx)
-    4. Tractability (Drug databases)
-    5. Biomarker Context (Synthetic lethality)
-    6. Competition (Clinical trials)
-    7. Auto-Rationale Synthesis
     """
     return await validation_agent.validate_hypothesis(gene, disease, cancer_type)
 
@@ -283,14 +371,6 @@ async def validate_hypothesis(
 async def smart_query(query: Query):
     """
     Intelligent query routing using Claude Agents SDK.
-
-    Claude analyzes the query and decides which tools to call,
-    reducing redundant API calls and improving response relevance.
-
-    Features:
-    - Semantic caching (skips API calls for similar recent queries)
-    - Selective tool invocation (only calls relevant APIs)
-    - Cost optimization (reduces external API calls by ~40-60%)
     """
     result = await orchestrator.process_query(query=query.text, context=query.context)
     return result
@@ -300,8 +380,6 @@ async def smart_query(query: Query):
 def get_orchestrator_stats():
     """
     Returns statistics about the orchestrator's performance.
-
-    Useful for monitoring cache hit rates and API call savings.
     """
     return orchestrator.get_stats()
 

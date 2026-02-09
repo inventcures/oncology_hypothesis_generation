@@ -50,22 +50,53 @@ type Paper = {
 type GraphNode = {
   id: string;
   type: string;
+  label: string;
+  color: string;
+  border_color: string;
+  confidence: number;
+  radius: number;
   x: number;
   y: number;
+  degree: number;
+  source: string;
+  glow: boolean;
 };
 
 type GraphLink = {
   source: string;
   target: string;
   relation: string;
+  label: string;
   weight: number;
+  color: string;
+  thickness: number;
+  source_data: string;
+  animated: boolean;
+};
+
+type GraphLegendItem = {
+  type: string;
+  color: string;
+  count: number;
+  label: string;
+};
+
+type GraphStats = {
+  total_nodes: number;
+  total_edges: number;
+  entity_types: Record<string, number>;
+  relation_types: Record<string, number>;
+  sources: Record<string, number>;
 };
 
 export default function Home() {
   const [query, setQuery] = useState("");
   const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
   const [papers, setPapers] = useState<Paper[]>([]);
-  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphLink[] } | null>(null);
+  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphLink[]; stats?: GraphStats; legend?: GraphLegendItem[] } | null>(null);
+  const [hoveredEdge, setHoveredEdge] = useState<number | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
@@ -167,9 +198,10 @@ export default function Home() {
     setStatus("Initializing TTT Adaptation...");
 
     try {
-      // Simulate TTT phases
-      setTimeout(() => setStatus("ARK Exploring Knowledge Graph..."), 1000);
-      setTimeout(() => setStatus("LitAgent Searching Papers..."), 2500);
+      // Simulate pipeline phases
+      setTimeout(() => setStatus("GLiNER2 Extracting Entities..."), 800);
+      setTimeout(() => setStatus("ARK Building Knowledge Graph..."), 1800);
+      setTimeout(() => setStatus("LitAgent Searching Papers..."), 2800);
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
       const res = await fetch(`${apiUrl}/generate`, {
@@ -197,14 +229,20 @@ export default function Home() {
     handleSubmit(undefined, text);
   };
 
-  const getNodeColor = (type: string) => {
-    switch (type) {
-      case "Gene": return "#3b82f6"; // Blue
-      case "Disease": return "#ef4444"; // Red
-      case "Drug": return "#10b981"; // Green
-      case "Mechanism": return "#8b5cf6"; // Purple
-      default: return "#9ca3af";
-    }
+  const getNodeColor = (node: GraphNode | { type: string; color?: string }) => {
+    // Use backend-provided color if available, else fallback
+    if ('color' in node && node.color) return node.color;
+    const fallbacks: Record<string, string> = {
+      gene: "#3b82f6", Gene: "#3b82f6",
+      disease: "#ef4444", Disease: "#ef4444",
+      drug: "#10b981", Drug: "#10b981",
+      pathway: "#8b5cf6", Pathway: "#8b5cf6",
+      mutation: "#f59e0b", Mutation: "#f59e0b",
+      cell_type: "#06b6d4", CellType: "#06b6d4",
+      biomarker: "#ec4899", Biomarker: "#ec4899",
+      mechanism: "#6366f1", Mechanism: "#6366f1",
+    };
+    return fallbacks[node.type] || "#9ca3af";
   };
 
   return (
@@ -220,6 +258,10 @@ export default function Home() {
         
         {hasSearched && (
             <div className="flex gap-6 text-sm font-medium">
+            <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${status.includes("GLiNER2") ? "bg-indigo-500 animate-pulse" : "bg-green-500"}`}></div>
+                <span className="text-slate-600">GLiNER2 NER</span>
+            </div>
             <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${status.includes("ARK") ? "bg-blue-500 animate-pulse" : "bg-green-500"}`}></div>
                 <span className="text-slate-600">ARK Agent</span>
@@ -240,7 +282,7 @@ export default function Home() {
                 <div className="space-y-4">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-sm font-medium border border-blue-100">
                         <Sparkles size={14} />
-                        <span>Powered by Test-Time Training & OpenTargets</span>
+                        <span>Powered by GLiNER2 NER, Test-Time Training & OpenTargets</span>
                     </div>
                     <h2 className="text-5xl font-extrabold text-slate-900 tracking-tight leading-tight">
                         Discover Hidden <br/> 
@@ -447,109 +489,278 @@ export default function Home() {
                     <>
                         {viewMode === "graph" && (
                             <>
-                                {/* Graph Legend */}
-                                <div className="absolute top-4 right-6 bg-white/90 p-3 rounded-lg border border-slate-200 shadow-sm text-xs space-y-2 z-10">
-                                    <div className="flex items-center gap-2">
-                                        <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-                                        <span className="text-slate-600 font-medium">Gene / Target</span>
+                                {/* Rich Graph Legend (from backend) */}
+                                <div className="absolute top-4 right-6 bg-white/95 backdrop-blur-sm p-4 rounded-xl border border-slate-200 shadow-lg text-xs space-y-2 z-10 min-w-[180px]">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Entity Types</span>
+                                        {graphData.stats && (
+                                            <span className="text-[10px] text-slate-400">
+                                                {graphData.stats.total_nodes}N / {graphData.stats.total_edges}E
+                                            </span>
+                                        )}
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="w-3 h-3 rounded-full bg-red-500"></span>
-                                        <span className="text-slate-600 font-medium">Disease / Phenotype</span>
+                                    {(graphData.legend || []).map((item) => (
+                                        <div key={item.type} className="flex items-center justify-between gap-2">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-3 h-3 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: item.color }}></span>
+                                                <span className="text-slate-600 font-medium">{item.label}</span>
+                                            </div>
+                                            <span className="text-slate-400 font-mono">{item.count}</span>
+                                        </div>
+                                    ))}
+                                    {(!graphData.legend || graphData.legend.length === 0) && (
+                                        <>
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-3 h-3 rounded-full bg-blue-500"></span>
+                                                <span className="text-slate-600 font-medium">Gene / Target</span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-3 h-3 rounded-full bg-red-500"></span>
+                                                <span className="text-slate-600 font-medium">Disease</span>
+                                            </div>
+                                        </>
+                                    )}
+                                    <div className="border-t border-slate-100 pt-2 mt-2 space-y-1.5">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Edges</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-6 h-[3px] bg-slate-500 rounded"></span>
+                                            <span className="text-slate-500">Weak</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-6 h-[5px] bg-slate-700 rounded"></span>
+                                            <span className="text-slate-500">Strong</span>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <span className="w-8 h-[3px] bg-slate-800 rounded"></span>
-                                        <span className="text-slate-600 font-medium">Assoc. Strength</span>
-                                    </div>
+                                    {graphData.stats?.sources && Object.keys(graphData.stats.sources).length > 1 && (
+                                        <div className="border-t border-slate-100 pt-2 mt-2 space-y-1">
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sources</span>
+                                            {Object.entries(graphData.stats.sources).map(([src, count]) => (
+                                                <div key={src} className="flex items-center justify-between text-[10px]">
+                                                    <span className="text-slate-500 capitalize">{src}</span>
+                                                    <span className="text-slate-400 font-mono">{count as number}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
 
                                 <svg className="w-full h-full" viewBox="0 0 800 600">
                                 <defs>
-                                <marker id="arrowhead" markerWidth="12" markerHeight="9" refX="26" refY="4.5" orient="auto">
-                                    <polygon points="0 0, 12 4.5, 0 9" fill="#1e293b" />
-                                </marker>
+                                    {/* Per-edge colored arrowheads */}
+                                    {graphData.links.map((link, i) => (
+                                        <marker key={`arrow-${i}`} id={`arrow-${i}`} markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                                            <polygon points="0 0, 10 4, 0 8" fill={hoveredEdge === i ? link.color : `${link.color}cc`} />
+                                        </marker>
+                                    ))}
+                                    {/* Default arrowhead fallback */}
+                                    <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                                        <polygon points="0 0, 10 4, 0 8" fill="#64748b" />
+                                    </marker>
+                                    {/* Glow filter for high-confidence nodes */}
+                                    <filter id="node-glow" x="-50%" y="-50%" width="200%" height="200%">
+                                        <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                                        <feMerge>
+                                            <feMergeNode in="coloredBlur"/>
+                                            <feMergeNode in="SourceGraphic"/>
+                                        </feMerge>
+                                    </filter>
+                                    {/* Pulse animation for high-confidence edges */}
+                                    <style>{`
+                                        @keyframes edge-pulse {
+                                            0%, 100% { opacity: 0.7; }
+                                            50% { opacity: 1; }
+                                        }
+                                        .edge-animated { animation: edge-pulse 2s ease-in-out infinite; }
+                                        @keyframes glow-pulse {
+                                            0%, 100% { filter: drop-shadow(0 0 4px rgba(59,130,246,0.3)); }
+                                            50% { filter: drop-shadow(0 0 8px rgba(59,130,246,0.6)); }
+                                        }
+                                        .node-glow { animation: glow-pulse 3s ease-in-out infinite; }
+                                    `}</style>
                                 </defs>
-                                {/* Links with Labels */}
-                                {graphData.links.map((link, i) => {
-                                const source = graphData.nodes.find(n => n.id === link.source);
-                                const target = graphData.nodes.find(n => n.id === link.target);
-                                if (!source || !target) return null;
-                                return (
-                                    <g key={i}>
-                                    <line
-                                        x1={source.x}
-                                        y1={source.y}
-                                        x2={target.x}
-                                        y2={target.y}
-                                        stroke="#1e293b"
-                                        strokeWidth={3}
-                                        markerEnd="url(#arrowhead)"
-                                        strokeLinecap="round"
-                                    />
-                                    {/* Edge Label Background */}
-                                    <rect 
-                                        x={(source.x + target.x)/2 - 22} 
-                                        y={(source.y + target.y)/2 - 11} 
-                                        width="44" 
-                                        height="18" 
-                                        rx="4" 
-                                        fill="#1e293b" 
-                                    />
-                                    {/* Edge Label Text */}
-                                    <text 
-                                        x={(source.x + target.x)/2} 
-                                        y={(source.y + target.y)/2 + 1} 
-                                        textAnchor="middle" 
-                                        dominantBaseline="middle"
-                                        className="text-[10px] fill-white font-bold"
-                                    >
-                                        {(link.weight * 100).toFixed(0)}%
-                                    </text>
-                                    </g>
-                                );
-                                })}
-                                {/* Nodes with Tooltips */}
-                                {graphData.nodes.map((node) => (
-                                <g key={node.id} transform={`translate(${node.x},${node.y})`} className="group relative">
-                                    <circle
-                                    r={24}
-                                    fill={getNodeColor(node.type)}
-                                    className="cursor-pointer transition-all duration-300 drop-shadow-md group-hover:drop-shadow-xl"
-                                    stroke="white"
-                                    strokeWidth={3}
-                                    />
-                                    
-                                    {/* Node Label */}
-                                    <text
-                                    dy={45}
-                                    textAnchor="middle"
-                                    className="text-[10px] font-bold fill-slate-500 uppercase tracking-wider pointer-events-none select-none"
-                                    >
-                                    {node.id}
-                                    </text>
-                                    
-                                    {/* Icon / Type Label */}
-                                    <text
-                                    dy={5}
-                                    textAnchor="middle"
-                                    fill="white"
-                                    fontSize="11"
-                                    fontWeight="bold"
-                                    pointer-events="none"
-                                    >
-                                    {node.type.slice(0, 2).toUpperCase()}
-                                    </text>
 
-                                    {/* Tooltip (Pure CSS/SVG Implementation) */}
-                                    <foreignObject x="-80" y="-80" width="160" height="60" className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                        <div className="bg-slate-800 text-white text-xs rounded-lg py-2 px-3 shadow-xl text-center">
-                                            <p className="font-bold mb-0.5">{node.id}</p>
-                                            <p className="text-slate-300 text-[10px]">{node.type}</p>
-                                            <div className="absolute bottom-[-4px] left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"></div>
-                                        </div>
-                                    </foreignObject>
-                                </g>
-                                ))}
+                                {/* === EDGES === */}
+                                {graphData.links.map((link, i) => {
+                                    const sourceNode = graphData.nodes.find(n => n.id === link.source);
+                                    const targetNode = graphData.nodes.find(n => n.id === link.target);
+                                    if (!sourceNode || !targetNode) return null;
+                                    
+                                    const isHovered = hoveredEdge === i;
+                                    const isConnectedToHoveredNode = hoveredNode === link.source || hoveredNode === link.target;
+                                    const isDimmed = hoveredNode !== null && !isConnectedToHoveredNode;
+                                    const edgeColor = link.color || "#94a3b8";
+                                    const thickness = link.thickness || (1 + link.weight * 4);
+                                    const midX = (sourceNode.x + targetNode.x) / 2;
+                                    const midY = (sourceNode.y + targetNode.y) / 2;
+
+                                    // Shorten line to stop at node radius
+                                    const sRadius = sourceNode.radius || 22;
+                                    const tRadius = targetNode.radius || 22;
+                                    const dx = targetNode.x - sourceNode.x;
+                                    const dy = targetNode.y - sourceNode.y;
+                                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                                    const sx = sourceNode.x + (dx / dist) * sRadius;
+                                    const sy = sourceNode.y + (dy / dist) * sRadius;
+                                    const tx = targetNode.x - (dx / dist) * (tRadius + 10);
+                                    const ty = targetNode.y - (dy / dist) * (tRadius + 10);
+
+                                    return (
+                                        <g key={`edge-${i}`} className={link.animated && !isDimmed ? 'edge-animated' : ''}>
+                                            {/* Invisible wider hit area for hover */}
+                                            <line
+                                                x1={sx} y1={sy} x2={tx} y2={ty}
+                                                stroke="transparent"
+                                                strokeWidth={Math.max(thickness + 10, 14)}
+                                                className="cursor-pointer"
+                                                onMouseEnter={() => setHoveredEdge(i)}
+                                                onMouseLeave={() => setHoveredEdge(null)}
+                                            />
+                                            {/* Visible edge */}
+                                            <line
+                                                x1={sx} y1={sy} x2={tx} y2={ty}
+                                                stroke={edgeColor}
+                                                strokeWidth={isHovered ? thickness + 1.5 : thickness}
+                                                strokeOpacity={isDimmed ? 0.15 : isHovered ? 1 : 0.7}
+                                                markerEnd={`url(#arrow-${i})`}
+                                                strokeLinecap="round"
+                                                className="transition-all duration-200"
+                                            />
+                                            {/* Edge label (shown on edge hover or node hover) */}
+                                            {(isHovered || isConnectedToHoveredNode) && !isDimmed && (
+                                                <>
+                                                    <rect
+                                                        x={midX - 32} y={midY - 12}
+                                                        width="64" height="24"
+                                                        rx="6" fill={edgeColor}
+                                                        fillOpacity={0.95}
+                                                        className="drop-shadow-md"
+                                                    />
+                                                    <text
+                                                        x={midX} y={midY + 1}
+                                                        textAnchor="middle" dominantBaseline="middle"
+                                                        className="text-[9px] fill-white font-bold select-none pointer-events-none"
+                                                    >
+                                                        {link.label || link.relation.replace(/_/g, ' ')}
+                                                    </text>
+                                                    {/* Confidence badge */}
+                                                    <rect
+                                                        x={midX + 28} y={midY - 8}
+                                                        width="28" height="16" rx="4"
+                                                        fill="white" fillOpacity={0.9}
+                                                    />
+                                                    <text
+                                                        x={midX + 42} y={midY + 1}
+                                                        textAnchor="middle" dominantBaseline="middle"
+                                                        className="text-[8px] font-bold select-none pointer-events-none"
+                                                        fill={edgeColor}
+                                                    >
+                                                        {(link.weight * 100).toFixed(0)}%
+                                                    </text>
+                                                </>
+                                            )}
+                                        </g>
+                                    );
+                                })}
+
+                                {/* === NODES === */}
+                                {graphData.nodes.map((node) => {
+                                    const nodeColor = getNodeColor(node);
+                                    const borderColor = node.border_color || nodeColor;
+                                    const radius = node.radius || 22;
+                                    const isHovered = hoveredNode === node.id;
+                                    const isSelected = selectedNode === node.id;
+                                    const isDimmed = hoveredNode !== null && !isHovered && !graphData.links.some(
+                                        l => (l.source === hoveredNode && l.target === node.id) || (l.target === hoveredNode && l.source === node.id)
+                                    );
+                                    const displayRadius = isHovered ? radius + 4 : isSelected ? radius + 2 : radius;
+
+                                    return (
+                                        <g
+                                            key={node.id}
+                                            transform={`translate(${node.x},${node.y})`}
+                                            className={`cursor-pointer ${node.glow && !isDimmed ? 'node-glow' : ''}`}
+                                            onMouseEnter={() => setHoveredNode(node.id)}
+                                            onMouseLeave={() => setHoveredNode(null)}
+                                            onClick={() => setSelectedNode(selectedNode === node.id ? null : node.id)}
+                                            opacity={isDimmed ? 0.25 : 1}
+                                        >
+                                            {/* Outer ring for selected state */}
+                                            {isSelected && (
+                                                <circle
+                                                    r={displayRadius + 6}
+                                                    fill="none"
+                                                    stroke={nodeColor}
+                                                    strokeWidth={2}
+                                                    strokeDasharray="4 3"
+                                                    opacity={0.6}
+                                                />
+                                            )}
+
+                                            {/* Confidence ring (background arc) */}
+                                            <circle
+                                                r={displayRadius + 2}
+                                                fill="none"
+                                                stroke={nodeColor}
+                                                strokeWidth={2.5}
+                                                strokeDasharray={`${node.confidence * 2 * Math.PI * (displayRadius + 2)} ${2 * Math.PI * (displayRadius + 2)}`}
+                                                strokeDashoffset={0}
+                                                opacity={0.35}
+                                                transform="rotate(-90)"
+                                            />
+
+                                            {/* Main node circle */}
+                                            <circle
+                                                r={displayRadius}
+                                                fill={nodeColor}
+                                                stroke="white"
+                                                strokeWidth={isHovered ? 4 : 3}
+                                                className="transition-all duration-200 drop-shadow-md"
+                                            />
+
+                                            {/* Node label (entity name) */}
+                                            <text
+                                                dy={displayRadius + 16}
+                                                textAnchor="middle"
+                                                className="text-[10px] font-bold fill-slate-600 pointer-events-none select-none"
+                                                style={{ textShadow: '0 1px 2px rgba(255,255,255,0.8)' }}
+                                            >
+                                                {(node.label || node.id).length > 16 ? (node.label || node.id).slice(0, 14) + '...' : (node.label || node.id)}
+                                            </text>
+
+                                            {/* Type abbreviation inside node */}
+                                            <text
+                                                dy={1}
+                                                textAnchor="middle"
+                                                dominantBaseline="middle"
+                                                fill="white"
+                                                fontSize={displayRadius > 28 ? "12" : "10"}
+                                                fontWeight="bold"
+                                                className="pointer-events-none select-none"
+                                            >
+                                                {(node.type || '').replace(/_/g, '').slice(0, 2).toUpperCase()}
+                                            </text>
+
+                                            {/* Rich tooltip on hover */}
+                                            {isHovered && (
+                                                <foreignObject x="-100" y={-(displayRadius + 80)} width="200" height="75" className="pointer-events-none">
+                                                    <div className="bg-slate-800/95 backdrop-blur text-white text-xs rounded-xl py-2.5 px-3.5 shadow-2xl border border-slate-600/30">
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <p className="font-bold text-[11px] truncate max-w-[140px]">{node.label || node.id}</p>
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-semibold" style={{ backgroundColor: `${nodeColor}40`, color: nodeColor }}>
+                                                                {node.type.replace(/_/g, ' ')}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-3 text-[10px] text-slate-300">
+                                                            <span>Conf: <strong className="text-white">{(node.confidence * 100).toFixed(0)}%</strong></span>
+                                                            <span>Deg: <strong className="text-white">{node.degree}</strong></span>
+                                                            <span className="capitalize text-slate-400">{node.source}</span>
+                                                        </div>
+                                                    </div>
+                                                </foreignObject>
+                                            )}
+                                        </g>
+                                    );
+                                })}
                             </svg>
                             </>
                         )}
@@ -559,39 +770,64 @@ export default function Home() {
                                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden max-w-5xl mx-auto">
                                     <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                                         <h3 className="text-lg font-bold text-slate-800">Entity Evidence Table</h3>
-                                        <p className="text-sm text-slate-500 mt-1">
-                                            Below are the biological entities (Genes, Diseases, Drugs) identified by the <strong>ARK Agent</strong> as relevant to your query. 
-                                            The coordinates represent their position in the TTT embedding space.
-                                        </p>
+                                         <p className="text-sm text-slate-500 mt-1">
+                                             Entities extracted by <strong>GLiNER2</strong> (biomedical NER) and enriched via <strong>OpenTargets</strong>.
+                                             {graphData.stats && ` ${graphData.stats.total_nodes} entities across ${Object.keys(graphData.stats.entity_types).length} types.`}
+                                         </p>
                                     </div>
                                     <table className="w-full text-sm text-left">
                                         <thead className="bg-slate-50 border-b border-slate-200">
-                                            <tr>
-                                                <th className="px-6 py-4 font-semibold text-slate-700 w-1/3">Entity Name</th>
-                                                <th className="px-6 py-4 font-semibold text-slate-700 w-1/4">Type</th>
-                                                <th className="px-6 py-4 font-semibold text-slate-700">Relevance Context</th>
-                                            </tr>
+                                             <tr>
+                                                 <th className="px-6 py-4 font-semibold text-slate-700 w-1/4">Entity Name</th>
+                                                 <th className="px-6 py-4 font-semibold text-slate-700 w-1/6">Type</th>
+                                                 <th className="px-6 py-4 font-semibold text-slate-700 w-[80px]">Confidence</th>
+                                                 <th className="px-6 py-4 font-semibold text-slate-700 w-[80px]">Source</th>
+                                                 <th className="px-6 py-4 font-semibold text-slate-700">Context</th>
+                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
                                             {graphData.nodes.map((n) => (
-                                                <tr key={n.id} className="hover:bg-slate-50/50 transition-colors">
-                                                    <td className="px-6 py-4 font-medium text-slate-900">{n.id}</td>
-                                                    <td className="px-6 py-4">
-                                                        <span 
-                                                            className="px-2.5 py-1 rounded-full text-xs font-semibold text-white shadow-sm"
-                                                            style={{backgroundColor: getNodeColor(n.type)}}
-                                                        >
-                                                            {n.type}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4 text-slate-500 text-xs">
-                                                        {/* Contextual help based on type */}
-                                                        {n.type === 'Gene' && `Potential driver or target in ${query.split(' ')[0]} context.`}
-                                                        {n.type === 'Disease' && `Clinical condition associated with retrieved targets.`}
-                                                        {n.type === 'Drug' && `Therapeutic agent interacting with this pathway.`}
-                                                        {n.type === 'Mechanism' && `Biological process implicated in resistance.`}
-                                                    </td>
-                                                </tr>
+                                                 <tr key={n.id} className="hover:bg-slate-50/50 transition-colors">
+                                                     <td className="px-6 py-4 font-medium text-slate-900">{n.label || n.id}</td>
+                                                     <td className="px-6 py-4">
+                                                         <span 
+                                                             className="px-2.5 py-1 rounded-full text-xs font-semibold text-white shadow-sm"
+                                                             style={{backgroundColor: getNodeColor(n)}}
+                                                         >
+                                                             {n.type.replace(/_/g, ' ')}
+                                                         </span>
+                                                     </td>
+                                                     <td className="px-6 py-4">
+                                                         <div className="flex items-center gap-2">
+                                                             <div className="w-12 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                                                 <div className="h-full rounded-full" style={{ width: `${(n.confidence || 0.5) * 100}%`, backgroundColor: getNodeColor(n) }} />
+                                                             </div>
+                                                             <span className="text-xs text-slate-500 font-mono">{((n.confidence || 0.5) * 100).toFixed(0)}%</span>
+                                                         </div>
+                                                     </td>
+                                                     <td className="px-6 py-4">
+                                                         <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${
+                                                             n.source === 'gliner2' ? 'bg-indigo-50 text-indigo-600' :
+                                                             n.source === 'opentargets' ? 'bg-emerald-50 text-emerald-600' :
+                                                             n.source === 'curated' ? 'bg-amber-50 text-amber-600' :
+                                                             'bg-slate-50 text-slate-500'
+                                                         }`}>
+                                                             {n.source || 'unknown'}
+                                                         </span>
+                                                     </td>
+                                                     <td className="px-6 py-4 text-slate-500 text-xs">
+                                                         {(n.type === 'gene' || n.type === 'Gene') && `Potential driver or target in ${query.split(' ')[0]} context.`}
+                                                         {(n.type === 'disease' || n.type === 'Disease') && `Clinical condition associated with retrieved targets.`}
+                                                         {(n.type === 'drug' || n.type === 'Drug') && `Therapeutic agent interacting with this pathway.`}
+                                                         {(n.type === 'mechanism' || n.type === 'Mechanism') && `Biological process implicated in resistance.`}
+                                                         {n.type === 'pathway' && `Signaling pathway connected to query targets.`}
+                                                         {n.type === 'mutation' && `Genetic alteration identified in query context.`}
+                                                         {n.type === 'cell_type' && `Cell population relevant to the tumor microenvironment.`}
+                                                         {n.type === 'biomarker' && `Predictive or prognostic biomarker.`}
+                                                         {n.type === 'anatomical_site' && `Anatomical location of disease presentation.`}
+                                                         {n.type === 'clinical_outcome' && `Treatment endpoint or clinical outcome measure.`}
+                                                     </td>
+                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
