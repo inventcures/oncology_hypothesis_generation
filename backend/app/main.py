@@ -19,6 +19,7 @@ from .protocols import ProtocolAgent
 from .validation import ValidationAgent
 from .orchestrator import AgentOrchestrator
 from .entity_extraction import get_extractor
+from .clinical_trials import ClinicalTrialsClient
 
 from contextlib import asynccontextmanager
 
@@ -66,6 +67,7 @@ patent_agent = PatentAgent()
 model_agent = ModelAgent()
 protocol_agent = ProtocolAgent()
 validation_agent = ValidationAgent()
+ct_client = ClinicalTrialsClient()
 
 # Agent Orchestrator for smart routing (Claude Agents SDK)
 orchestrator = AgentOrchestrator(
@@ -552,6 +554,27 @@ async def validate_hypothesis(
     Runs comprehensive validation checks on a hypothesis.
     """
     return await validation_agent.validate_hypothesis(gene, disease, cancer_type)
+
+
+@app.get("/clinical_trials")
+async def get_clinical_trials(
+    gene: str,
+    disease: str = "cancer",
+    status: str = "ALL",
+    phase: str = "ALL",
+    page_size: int = 50,
+):
+    """
+    Search ClinicalTrials.gov for trials relevant to a gene target and disease.
+    Returns individual trials and aggregated summary statistics.
+    """
+    return await ct_client.search_trials(
+        gene=gene,
+        disease=disease,
+        status=status,
+        phase=phase,
+        page_size=page_size,
+    )
 
 
 @app.post("/smart_query")

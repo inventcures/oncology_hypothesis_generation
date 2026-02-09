@@ -26,6 +26,15 @@ const ValidationDashboard = dynamic(() => import("./components/ValidationDashboa
   ),
 });
 
+const ClinicalTrialsDashboard = dynamic(() => import("./components/ClinicalTrialsDashboard"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  ),
+});
+
 type Hypothesis = {
   id: string;
   title: string;
@@ -191,7 +200,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
-  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials">("graph");
   const [drData, setDrData] = useState<DeepResearchData | null>(null);
   const [drLoading, setDrLoading] = useState(false);
   const [validationData, setValidationData] = useState<any>(null);
@@ -199,6 +208,9 @@ export default function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [drError, setDrError] = useState<string | null>(null);
   const [validationQuery, setValidationQuery] = useState<string>("");
+  const [trialsData, setTrialsData] = useState<any>(null);
+  const [trialsLoading, setTrialsLoading] = useState(false);
+  const [trialsQuery, setTrialsQuery] = useState("");
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -338,6 +350,28 @@ export default function Home() {
     }
   }, [graphData, query]);
 
+  const handleTrialsSearch = useCallback(async () => {
+    if (!graphData?.nodes) return;
+    const geneNode = graphData.nodes.find((n) => n.type.toLowerCase() === "gene");
+    const diseaseNode = graphData.nodes.find((n) => n.type.toLowerCase() === "disease");
+    const gene = geneNode?.id || "";
+    const disease = diseaseNode?.id || "cancer";
+    if (!gene) return;
+    setTrialsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/clinical_trials?gene=${encodeURIComponent(gene)}&disease=${encodeURIComponent(disease)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setTrialsData(data);
+        setTrialsQuery(query);
+      }
+    } catch (err) {
+      console.error("Clinical trials fetch failed:", err);
+    } finally {
+      setTrialsLoading(false);
+    }
+  }, [graphData, query]);
+
   const handleSubmit = useCallback(async (e?: React.FormEvent, overrideQuery?: string) => {
     if (e) e.preventDefault();
     const textToSearch = overrideQuery || query;
@@ -355,6 +389,8 @@ export default function Home() {
     setDrError(null);
     setValidationData(null);
     setValidationQuery("");
+    setTrialsData(null);
+    setTrialsQuery("");
     setHoveredEdge(null);
     setHoveredNode(null);
     setSelectedNode(null);
@@ -672,6 +708,14 @@ export default function Home() {
                 >
                     <FlaskConical size={16} />
                     <span>Feasibility</span>
+                </button>
+                <div className="w-px bg-slate-200 my-1 mx-1"></div>
+                <button
+                    onClick={() => setViewMode("trials")}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "trials" ? "bg-cyan-50 text-cyan-600 shadow-sm border border-cyan-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <Activity size={16} />
+                    <span>Trials</span>
                 </button>
             </div>
 
@@ -1796,6 +1840,18 @@ export default function Home() {
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        )}
+
+                        {viewMode === "trials" && (
+                            <div className="w-full h-full overflow-auto bg-slate-50/30 p-6">
+                                <ClinicalTrialsDashboard
+                                    data={trialsData}
+                                    loading={trialsLoading}
+                                    onSearch={handleTrialsSearch}
+                                    gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
+                                    disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
+                                />
                             </div>
                         )}
                     </>
