@@ -16,7 +16,9 @@ import json
 import hashlib
 import asyncio
 import logging
+import re
 import threading
+from .constants import SEMANTIC_CACHE_MAX_SIZE, SEMANTIC_SIMILARITY_THRESHOLD
 from typing import Dict, List, Any, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -156,7 +158,7 @@ class SemanticCache:
     Uses simple keyword overlap for fast matching (no embeddings needed).
     """
 
-    def __init__(self, max_size: int = 1000):
+    def __init__(self, max_size: int = SEMANTIC_CACHE_MAX_SIZE):
         self.cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self.max_size = max_size
         self.hits = 0
@@ -167,7 +169,7 @@ class SemanticCache:
         """Create normalized cache key"""
         # Sort params for consistent hashing
         sorted_params = json.dumps(params, sort_keys=True).lower()
-        return f"{tool}:{hashlib.md5(sorted_params.encode()).hexdigest()}"
+        return f"{tool}:{hashlib.sha256(sorted_params.encode()).hexdigest()}"
 
     def _extract_keywords(self, params: Dict) -> set:
         """Extract keywords from parameters for fuzzy matching"""
@@ -221,7 +223,7 @@ class SemanticCache:
                     union = len(query_keywords | cached_keywords)
                     score = intersection / union if union > 0 else 0
 
-                    if score > 0.8 and score > best_score:  # 80% similarity threshold
+                    if score > SEMANTIC_SIMILARITY_THRESHOLD and score > best_score:
                         best_score = score
                         best_match = entry.data
 
@@ -295,7 +297,8 @@ class AgentOrchestrator:
         self.cache = SemanticCache() if enable_cache else None
         self.model = model
 
-        # Stats
+        # Stats (thread-safe counters)
+        self._stats_lock = threading.Lock()
         self.total_queries = 0
         self.tools_called = 0
         self.tools_skipped = 0
@@ -317,7 +320,8 @@ class AgentOrchestrator:
         Returns:
             Combined results from relevant tools
         """
-        self.total_queries += 1
+        with self._stats_lock:
+            self.total_queries += 1
 
         # If no API key, fall back to calling all tools
         if not self.client:
@@ -381,13 +385,14 @@ You may call multiple tools if the query requires multiple types of information.
                 cached = self.cache.get(tool_name, tool_input) if self.cache else None
                 if cached:
                     results[tool_name] = cached
-                    self.tools_skipped += 1
+                    with self._stats_lock:
+                        self.tools_skipped += 1
                     tools_used.append({"name": tool_name, "cached": True})
                 else:
-                    # Execute tool
                     result = await self._execute_tool(tool_name, tool_input)
                     results[tool_name] = result
-                    self.tools_called += 1
+                    with self._stats_lock:
+                        self.tools_called += 1
                     tools_used.append({"name": tool_name, "cached": False})
 
                     # Cache result
@@ -475,9 +480,6 @@ You may call multiple tools if the query requires multiple types of information.
             if diseases:
                 disease = entity_text(diseases[0]) or "cancer"
         except Exception:
-            # GLiNER2 unavailable, fall back to regex
-            import re
-
             gene_match = re.search(r"\b([A-Z][A-Z0-9]{2,})\b", query)
             gene = gene_match.group(1) if gene_match else "UNKNOWN"
             for d in [

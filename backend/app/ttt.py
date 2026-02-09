@@ -88,7 +88,3 @@ class QueryAdaptiveRanker:
                     novel.append((node, score))
         novel.sort(key=lambda x: x[1], reverse=True)
         return novel[:k]
-
-
-# Backward-compatible alias
-TTTAdapter = QueryAdaptiveRanker

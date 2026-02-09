@@ -1,0 +1,169 @@
+{
+  "gene_pathways": {
+    "KRAS": ["MAPK Signaling", "PI3K-Akt Signaling"],
+    "EGFR": ["ERBB Signaling", "Glioma Pathway"],
+    "TP53": ["P53 Signaling", "Apoptosis"],
+    "STK11": ["mTOR Signaling", "AMPK Signaling"],
+    "YAP1": ["Hippo Signaling", "WNT Signaling"],
+    "BRAF": ["MAPK Signaling"],
+    "ALK": ["ALK Signaling", "PI3K-Akt Signaling"],
+    "ROS1": ["ROS1 Signaling", "MAPK Signaling"],
+    "MET": ["HGF/MET Signaling", "PI3K-Akt Signaling"],
+    "NTRK1": ["NTRK Signaling", "MAPK Signaling"],
+    "RET": ["RET Signaling", "MAPK Signaling"],
+    "PIK3CA": ["PI3K-Akt Signaling", "mTOR Signaling"],
+    "PTEN": ["PI3K-Akt Signaling", "Apoptosis"],
+    "BRCA1": ["DNA Damage Repair", "Homologous Recombination"],
+    "BRCA2": ["DNA Damage Repair", "Homologous Recombination"]
+  },
+  "gene_cell_types": {
+    "KRAS": ["Epithelial Cell", "Alveolar Type II Cell"],
+    "STK11": ["Macrophage (M2)", "Regulatory T-Cell"],
+    "YAP1": ["Cancer Associated Fibroblast", "Malignant Cell"],
+    "CD8A": ["CD8+ T-Cell"],
+    "PDCD1": ["Exhausted T-Cell"],
+    "EGFR": ["Epithelial Cell", "Basal Cell"],
+    "TP53": ["Malignant Cell", "Stem Cell"]
+  },
+  "signaling_cascades": {
+    "KRAS": {
+      "upstream": [
+        ["EGFR", "activates"],
+        ["SOS1", "activates"],
+        ["GRB2", "recruits"],
+        ["NF1", "inhibits"]
+      ],
+      "downstream": [
+        ["RAF1", "activates"],
+        ["BRAF", "activates"],
+        ["MEK1", "activates"],
+        ["ERK1/2", "activates"],
+        ["PIK3CA", "activates"],
+        ["RALGDS", "activates"]
+      ]
+    },
+    "EGFR": {
+      "upstream": [
+        ["EGF", "ligand"],
+        ["TGFa", "ligand"],
+        ["EREG", "ligand"]
+      ],
+      "downstream": [
+        ["KRAS", "activates"],
+        ["JAK2", "activates"],
+        ["STAT3", "activates"],
+        ["PIK3CA", "activates"],
+        ["SRC", "activates"]
+      ]
+    },
+    "BRAF": {
+      "upstream": [
+        ["KRAS", "activates"],
+        ["NRAS", "activates"]
+      ],
+      "downstream": [
+        ["MEK1", "activates"],
+        ["MEK2", "activates"],
+        ["ERK1/2", "activates"]
+      ]
+    },
+    "TP53": {
+      "upstream": [
+        ["ATM", "activates"],
+        ["ATR", "activates"],
+        ["CHK2", "activates"],
+        ["MDM2", "inhibits"]
+      ],
+      "downstream": [
+        ["P21", "induces"],
+        ["BAX", "induces"],
+        ["PUMA", "induces"],
+        ["NOXA", "induces"],
+        ["MDM2", "induces"]
+      ]
+    },
+    "PIK3CA": {
+      "upstream": [
+        ["EGFR", "activates"],
+        ["HER2", "activates"],
+        ["KRAS", "activates"],
+        ["PTEN", "inhibits"]
+      ],
+      "downstream": [
+        ["AKT1", "activates"],
+        ["mTOR", "activates"],
+        ["S6K1", "activates"]
+      ]
+    },
+    "STK11": {
+      "upstream": [
+        ["LKB1 complex", "activates"]
+      ],
+      "downstream": [
+        ["AMPK", "activates"],
+        ["mTOR", "inhibits"],
+        ["HIF1A", "inhibits"]
+      ]
+    },
+    "YAP1": {
+      "upstream": [
+        ["LATS1", "inhibits"],
+        ["LATS2", "inhibits"],
+        ["MST1", "inhibits"],
+        ["NF2", "inhibits"]
+      ],
+      "downstream": [
+        ["TEAD1", "co-activates"],
+        ["CTGF", "induces"],
+        ["CYR61", "induces"],
+        ["MYC", "induces"]
+      ]
+    },
+    "MYC": {
+      "upstream": [
+        ["ERK1/2", "stabilizes"],
+        ["AKT1", "stabilizes"],
+        ["WNT/b-catenin", "induces"]
+      ],
+      "downstream": [
+        ["CDK4", "induces"],
+        ["Cyclin D1", "induces"],
+        ["E2F", "activates"],
+        ["P21", "represses"]
+      ]
+    },
+    "BRCA1": {
+      "upstream": [
+        ["ATM", "phosphorylates"],
+        ["ATR", "phosphorylates"],
+        ["CHK2", "phosphorylates"]
+      ],
+      "downstream": [
+        ["RAD51", "recruits"],
+        ["PALB2", "recruits"],
+        ["BRCA2", "recruits"]
+      ]
+    },
+    "ALK": {
+      "upstream": [
+        ["EML4-ALK fusion", "constitutive"]
+      ],
+      "downstream": [
+        ["KRAS", "activates"],
+        ["STAT3", "activates"],
+        ["PIK3CA", "activates"]
+      ]
+    },
+    "MET": {
+      "upstream": [
+        ["HGF", "ligand"]
+      ],
+      "downstream": [
+        ["KRAS", "activates"],
+        ["PIK3CA", "activates"],
+        ["STAT3", "activates"],
+        ["FAK", "activates"]
+      ]
+    }
+  }
+}

@@ -20,7 +20,9 @@ class PatentAgent:
     3. Google Patents / Lens.org links for manual verification
     """
 
-    def __init__(self):
+    def __init__(self, client: Optional[httpx.AsyncClient] = None):
+        self.client = client or httpx.AsyncClient(timeout=30.0)
+        self._owns_client = client is None
         self.patentsview_url = "https://api.patentsview.org/patents/query"
         self.current_year = datetime.now().year
 
@@ -171,22 +173,21 @@ class PatentAgent:
             "s": [{"patent_date": "desc"}],
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                resp = await client.post(
-                    self.patentsview_url,
-                    json=query,
-                    headers={"Content-Type": "application/json"},
-                )
+        try:
+            resp = await self.client.post(
+                self.patentsview_url,
+                json=query,
+                headers={"Content-Type": "application/json"},
+            )
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return self._parse_patentsview_response(data)
-                else:
-                    logger.warning("PatentsView API returned %s", resp.status_code)
+            if resp.status_code == 200:
+                data = resp.json()
+                return self._parse_patentsview_response(data)
+            else:
+                logger.warning("PatentsView API returned %s", resp.status_code)
 
-            except Exception as e:
-                logger.error("PatentsView API error: %s", e)
+        except Exception as e:
+            logger.error("PatentsView API error: %s", e)
 
         # Fallback: return empty but structured data
         return {

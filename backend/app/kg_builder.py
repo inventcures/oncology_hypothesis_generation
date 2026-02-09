@@ -14,10 +14,23 @@ Also merges OpenTargets API associations into the same graph so the
 frontend renders a single, unified, richly-styled KG.
 """
 
+import json
 import networkx as nx
 import math
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
+
+_DATA_DIR = Path(__file__).parent / "data"
+
+def _load_pathway_data() -> Dict[str, Any]:
+    path = _DATA_DIR / "pathways.json"
+    if path.exists():
+        with open(path) as f:
+            return json.load(f)
+    return {"gene_pathways": {}, "gene_cell_types": {}, "signaling_cascades": {}}
+
+_PATHWAY_DATA = _load_pathway_data()
 
 # ---------------------------------------------------------------------------
 # Visual style constants
@@ -120,9 +133,6 @@ def entity_text(item: Any) -> str:
     return str(item)
 
 
-# Backward-compatible alias
-_entity_text = entity_text
-
 
 def _entity_confidence(item: Any) -> float:
     """Extract confidence float from various GLiNER2 output formats."""
@@ -164,7 +174,7 @@ class KnowledgeGraphBuilder:
         for entity_type, items in entities.items():
             norm_type = _normalise_type(entity_type)
             for item in items:
-                text = _entity_text(item)
+                text = entity_text(item)
                 conf = _entity_confidence(item)
                 node_id = text  # use raw text as node id
 
@@ -295,178 +305,10 @@ class KnowledgeGraphBuilder:
         effectors for the seed gene. Provides directional signaling context
         for the Pathway view.
         """
-        pathways = {
-            "KRAS": ["MAPK Signaling", "PI3K-Akt Signaling"],
-            "EGFR": ["ERBB Signaling", "Glioma Pathway"],
-            "TP53": ["P53 Signaling", "Apoptosis"],
-            "STK11": ["mTOR Signaling", "AMPK Signaling"],
-            "YAP1": ["Hippo Signaling", "WNT Signaling"],
-            "BRAF": ["MAPK Signaling"],
-            "ALK": ["ALK Signaling", "PI3K-Akt Signaling"],
-            "ROS1": ["ROS1 Signaling", "MAPK Signaling"],
-            "MET": ["HGF/MET Signaling", "PI3K-Akt Signaling"],
-            "NTRK1": ["NTRK Signaling", "MAPK Signaling"],
-            "RET": ["RET Signaling", "MAPK Signaling"],
-            "PIK3CA": ["PI3K-Akt Signaling", "mTOR Signaling"],
-            "PTEN": ["PI3K-Akt Signaling", "Apoptosis"],
-            "BRCA1": ["DNA Damage Repair", "Homologous Recombination"],
-            "BRCA2": ["DNA Damage Repair", "Homologous Recombination"],
-        }
-        cell_types = {
-            "KRAS": ["Epithelial Cell", "Alveolar Type II Cell"],
-            "STK11": ["Macrophage (M2)", "Regulatory T-Cell"],
-            "YAP1": ["Cancer Associated Fibroblast", "Malignant Cell"],
-            "CD8A": ["CD8+ T-Cell"],
-            "PDCD1": ["Exhausted T-Cell"],
-            "EGFR": ["Epithelial Cell", "Basal Cell"],
-            "TP53": ["Malignant Cell", "Stem Cell"],
-        }
+        pathways = _PATHWAY_DATA.get("gene_pathways", {})
+        cell_types = _PATHWAY_DATA.get("gene_cell_types", {})
 
-        # ---------------------------------------------------------------
-        # Upstream/Downstream signaling cascade data
-        # Format: gene -> { upstream: [(activator, relation)], downstream: [(effector, relation)] }
-        # ---------------------------------------------------------------
-        signaling = {
-            "KRAS": {
-                "upstream": [
-                    ("EGFR", "activates"),
-                    ("SOS1", "activates"),
-                    ("GRB2", "recruits"),
-                    ("NF1", "inhibits"),
-                ],
-                "downstream": [
-                    ("RAF1", "activates"),
-                    ("BRAF", "activates"),
-                    ("MEK1", "activates"),
-                    ("ERK1/2", "activates"),
-                    ("PIK3CA", "activates"),
-                    ("RALGDS", "activates"),
-                ],
-            },
-            "EGFR": {
-                "upstream": [
-                    ("EGF", "ligand"),
-                    ("TGFa", "ligand"),
-                    ("EREG", "ligand"),
-                ],
-                "downstream": [
-                    ("KRAS", "activates"),
-                    ("JAK2", "activates"),
-                    ("STAT3", "activates"),
-                    ("PIK3CA", "activates"),
-                    ("SRC", "activates"),
-                ],
-            },
-            "BRAF": {
-                "upstream": [
-                    ("KRAS", "activates"),
-                    ("NRAS", "activates"),
-                ],
-                "downstream": [
-                    ("MEK1", "activates"),
-                    ("MEK2", "activates"),
-                    ("ERK1/2", "activates"),
-                ],
-            },
-            "TP53": {
-                "upstream": [
-                    ("ATM", "activates"),
-                    ("ATR", "activates"),
-                    ("CHK2", "activates"),
-                    ("MDM2", "inhibits"),
-                ],
-                "downstream": [
-                    ("P21", "induces"),
-                    ("BAX", "induces"),
-                    ("PUMA", "induces"),
-                    ("NOXA", "induces"),
-                    ("MDM2", "induces"),
-                ],
-            },
-            "PIK3CA": {
-                "upstream": [
-                    ("EGFR", "activates"),
-                    ("HER2", "activates"),
-                    ("KRAS", "activates"),
-                    ("PTEN", "inhibits"),
-                ],
-                "downstream": [
-                    ("AKT1", "activates"),
-                    ("mTOR", "activates"),
-                    ("S6K1", "activates"),
-                ],
-            },
-            "STK11": {
-                "upstream": [
-                    ("LKB1 complex", "activates"),
-                ],
-                "downstream": [
-                    ("AMPK", "activates"),
-                    ("mTOR", "inhibits"),
-                    ("HIF1A", "inhibits"),
-                ],
-            },
-            "YAP1": {
-                "upstream": [
-                    ("LATS1", "inhibits"),
-                    ("LATS2", "inhibits"),
-                    ("MST1", "inhibits"),
-                    ("NF2", "inhibits"),
-                ],
-                "downstream": [
-                    ("TEAD1", "co-activates"),
-                    ("CTGF", "induces"),
-                    ("CYR61", "induces"),
-                    ("MYC", "induces"),
-                ],
-            },
-            "MYC": {
-                "upstream": [
-                    ("ERK1/2", "stabilizes"),
-                    ("AKT1", "stabilizes"),
-                    ("WNT/b-catenin", "induces"),
-                ],
-                "downstream": [
-                    ("CDK4", "induces"),
-                    ("Cyclin D1", "induces"),
-                    ("E2F", "activates"),
-                    ("P21", "represses"),
-                ],
-            },
-            "BRCA1": {
-                "upstream": [
-                    ("ATM", "phosphorylates"),
-                    ("ATR", "phosphorylates"),
-                    ("CHK2", "phosphorylates"),
-                ],
-                "downstream": [
-                    ("RAD51", "recruits"),
-                    ("PALB2", "recruits"),
-                    ("BRCA2", "recruits"),
-                ],
-            },
-            "ALK": {
-                "upstream": [
-                    ("EML4-ALK fusion", "constitutive"),
-                ],
-                "downstream": [
-                    ("KRAS", "activates"),
-                    ("STAT3", "activates"),
-                    ("PIK3CA", "activates"),
-                ],
-            },
-            "MET": {
-                "upstream": [
-                    ("HGF", "ligand"),
-                ],
-                "downstream": [
-                    ("KRAS", "activates"),
-                    ("PIK3CA", "activates"),
-                    ("STAT3", "activates"),
-                    ("FAK", "activates"),
-                ],
-            },
-        }
+        signaling = _PATHWAY_DATA.get("signaling_cascades", {})
 
         # --- Add pathway nodes/edges ---
         for p_name in pathways.get(seed_gene, []):
@@ -595,9 +437,19 @@ class KnowledgeGraphBuilder:
     ) -> Dict[str, Tuple[float, float]]:
         """
         Compute spring layout positions and return as {node_id: (x, y)}.
+        Caches result based on graph fingerprint to avoid recomputation.
         """
         if self.graph.number_of_nodes() == 0:
             return {}
+
+        cache_key = (
+            self.graph.number_of_nodes(),
+            self.graph.number_of_edges(),
+            width,
+            height,
+        )
+        if hasattr(self, "_layout_cache") and self._layout_cache_key == cache_key:
+            return self._layout_cache
 
         pos = nx.spring_layout(
             self.graph,
@@ -606,7 +458,6 @@ class KnowledgeGraphBuilder:
             iterations=80,
         )
 
-        # Scale to canvas
         xs = [p[0] for p in pos.values()]
         ys = [p[1] for p in pos.values()]
         x_min, x_max = min(xs), max(xs)
@@ -619,6 +470,9 @@ class KnowledgeGraphBuilder:
             sx = padding + ((x - x_min) / x_range) * (width - 2 * padding)
             sy = padding + ((y - y_min) / y_range) * (height - 2 * padding)
             scaled[nid] = (round(sx, 1), round(sy, 1))
+
+        self._layout_cache = scaled
+        self._layout_cache_key = cache_key
 
         return scaled
 

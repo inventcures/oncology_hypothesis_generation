@@ -68,17 +68,18 @@ class AtlasAgent:
                 # Mocking UMAP generation based on cell types to create clusters
                 # (Real implementation would fetch 'X_umap' from specific datasets if available)
 
+                rng = np.random.default_rng(seed=42)
+
                 unique_types = obs_df["cell_type"].unique()
                 type_centers = {
-                    t: (np.random.uniform(-10, 10), np.random.uniform(-10, 10))
+                    t: (rng.uniform(-10, 10), rng.uniform(-10, 10))
                     for t in unique_types
                 }
 
                 for _, row in obs_df.iterrows():
                     center = type_centers[row["cell_type"]]
-                    # Add noise
-                    x = center[0] + np.random.normal(0, 1)
-                    y = center[1] + np.random.normal(0, 1)
+                    x = center[0] + rng.normal(0, 1)
+                    y = center[1] + rng.normal(0, 1)
 
                     cells.append(
                         {
@@ -87,13 +88,11 @@ class AtlasAgent:
                             "y": y,
                             "cell_type": row["cell_type"],
                             "disease": row["disease"],
-                            "expression": np.random.uniform(
-                                0, 5
-                            ),  # Placeholder for gene expression
+                            "expression": rng.uniform(0, 5),
                         }
                     )
 
-                return {"cells": cells}
+                return {"cells": cells, "is_synthetic": True}
 
         except Exception as e:
             logger.error("Atlas Error: %s", e)

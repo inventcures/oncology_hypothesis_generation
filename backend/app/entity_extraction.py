@@ -19,6 +19,11 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 import time
 import logging
+from .constants import (
+    EXTRACTION_CACHE_MAX_SIZE,
+    EXTRACTION_CACHE_TTL,
+    DEFAULT_ENTITY_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +81,7 @@ class ExtractionCacheEntry:
 
     result: Dict[str, Any]
     timestamp: float
-    ttl: float = 1800.0  # 30 min default
+    ttl: float = EXTRACTION_CACHE_TTL
 
     @property
     def is_expired(self) -> bool:
@@ -86,7 +91,7 @@ class ExtractionCacheEntry:
 class ExtractionCache:
     """Thread-safe LRU cache for extraction results."""
 
-    def __init__(self, max_size: int = 500):
+    def __init__(self, max_size: int = EXTRACTION_CACHE_MAX_SIZE):
         self.cache: OrderedDict[str, ExtractionCacheEntry] = OrderedDict()
         self.max_size = max_size
         self._lock = threading.Lock()
@@ -199,7 +204,7 @@ class OncologyEntityExtractor:
         self,
         text: str,
         entity_labels: Optional[Dict[str, str]] = None,
-        threshold: float = 0.4,
+        threshold: float = DEFAULT_ENTITY_THRESHOLD,
         include_confidence: bool = True,
         include_spans: bool = True,
     ) -> Dict[str, Any]:

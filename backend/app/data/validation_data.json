@@ -1,0 +1,123 @@
+{
+  "essential_genes": {
+    "KRAS": {"lung": -1.2, "pancreas": -1.4, "colorectal": -1.1},
+    "EGFR": {"lung": -0.9, "glioblastoma": -1.1},
+    "BRAF": {"melanoma": -1.3, "colorectal": -0.8},
+    "MYC": {"lymphoma": -1.5, "breast": -0.9},
+    "BCL2": {"lymphoma": -1.4, "leukemia": -1.2},
+    "CDK4": {"breast": -0.8, "melanoma": -0.9},
+    "PIK3CA": {"breast": -0.7, "colorectal": -0.6},
+    "TP53": {"universal": -0.3},
+    "STK11": {"lung": -0.4},
+    "YAP1": {"mesothelioma": -1.0, "liver": -0.9}
+  },
+  "prognostic_genes": {
+    "KRAS": {"lung": [1.8, 0.001], "pancreas": [2.1, 0.0001]},
+    "TP53": {"breast": [1.6, 0.01], "colorectal": [1.5, 0.02]},
+    "EGFR": {"lung": [1.4, 0.03], "glioblastoma": [1.7, 0.01]},
+    "MYC": {"lymphoma": [2.0, 0.001], "breast": [1.5, 0.02]},
+    "BRAF": {"melanoma": [1.3, 0.05], "colorectal": [1.9, 0.001]},
+    "STK11": {"lung": [1.9, 0.001]},
+    "YAP1": {"mesothelioma": [1.7, 0.01], "liver": [1.6, 0.02]},
+    "HER2": {"breast": [1.8, 0.001], "gastric": [1.6, 0.01]}
+  },
+  "toxicity_profiles": {
+    "high_toxicity": {
+      "BCL2": ["Bone Marrow", "Lymph Node"],
+      "EGFR": ["Skin", "Lung", "Kidney"],
+      "VEGF": ["Heart", "Kidney"],
+      "CDK4": ["Bone Marrow"],
+      "MYC": ["Bone Marrow", "Small Intestine"]
+    },
+    "safe_genes": ["KRAS", "BRAF", "PIK3CA", "STK11", "YAP1"]
+  },
+  "drug_data": {
+    "EGFR": {
+      "approved": ["Erlotinib", "Gefitinib", "Osimertinib", "Afatinib"],
+      "clinical": ["Amivantamab", "Lazertinib"],
+      "modalities": ["Small molecule", "Antibody"]
+    },
+    "BRAF": {
+      "approved": ["Vemurafenib", "Dabrafenib", "Encorafenib"],
+      "clinical": [],
+      "modalities": ["Small molecule"]
+    },
+    "KRAS": {
+      "approved": ["Sotorasib", "Adagrasib"],
+      "clinical": ["MRTX1133", "RMC-6236"],
+      "modalities": ["Small molecule", "PROTAC"]
+    },
+    "HER2": {
+      "approved": ["Trastuzumab", "Pertuzumab", "T-DM1", "Tucatinib"],
+      "clinical": [],
+      "modalities": ["Antibody", "ADC", "Small molecule"]
+    },
+    "BCL2": {
+      "approved": ["Venetoclax"],
+      "clinical": [],
+      "modalities": ["BH3 mimetic"]
+    },
+    "PIK3CA": {
+      "approved": ["Alpelisib"],
+      "clinical": ["Inavolisib"],
+      "modalities": ["Small molecule"]
+    },
+    "CDK4": {
+      "approved": ["Palbociclib", "Ribociclib", "Abemaciclib"],
+      "clinical": [],
+      "modalities": ["Small molecule"]
+    },
+    "MYC": {
+      "approved": [],
+      "clinical": [],
+      "preclinical": ["OMOMYC"],
+      "modalities": ["Undrugged - transcription factor"]
+    },
+    "YAP1": {
+      "approved": [],
+      "clinical": ["IAG933", "VT3989"],
+      "modalities": ["TEAD inhibitor"]
+    },
+    "STK11": {
+      "approved": [],
+      "clinical": [],
+      "modalities": ["Tumor suppressor - not directly druggable"]
+    }
+  },
+  "synthetic_lethality": {
+    "PARP1": {
+      "partners": ["BRCA1", "BRCA2", "ATM", "PALB2"],
+      "context": "DNA damage repair deficiency"
+    },
+    "PRMT5": {
+      "partners": ["MTAP"],
+      "context": "MTAP deletion creates metabolic vulnerability"
+    },
+    "WRN": {
+      "partners": ["MSI-H"],
+      "context": "Microsatellite instability"
+    },
+    "KRAS": {
+      "partners": ["STK11", "KEAP1"],
+      "context": "Co-mutations affect response"
+    },
+    "SHP2": {
+      "partners": ["KRAS", "EGFR"],
+      "context": "RTK-RAS pathway dependency"
+    }
+  },
+  "tcga_study_map": {
+    "lung": "luad_tcga",
+    "breast": "brca_tcga",
+    "colorectal": "coadread_tcga",
+    "pancreas": "paad_tcga",
+    "melanoma": "skcm_tcga",
+    "glioblastoma": "gbm_tcga",
+    "ovarian": "ov_tcga",
+    "prostate": "prad_tcga",
+    "liver": "lihc_tcga",
+    "kidney": "kirc_tcga",
+    "nsclc": "luad_tcga",
+    "mesothelioma": "meso_tcga"
+  }
+}

@@ -22,7 +22,9 @@ class StructureAgent:
     Fetches AlphaFold structures and performs druggability analysis.
     """
 
-    def __init__(self):
+    def __init__(self, client: Optional[httpx.AsyncClient] = None):
+        self.client = client or httpx.AsyncClient(timeout=60.0)
+        self._owns_client = client is None
         self.af_db_url = "https://alphafold.ebi.ac.uk/files"
         self.uniprot_url = "https://rest.uniprot.org/uniprotkb/search"
         # Hydrophobic residues important for binding pockets
@@ -46,14 +48,13 @@ class StructureAgent:
             "format": "json",
             "size": 1,
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                resp = await client.get(self.uniprot_url, params=params)
-                data = resp.json()
-                if data.get("results"):
-                    return data["results"][0]["primaryAccession"]
-            except Exception as e:
-                logger.error("Uniprot Search Error: %s", e)
+        try:
+            resp = await self.client.get(self.uniprot_url, params=params)
+            data = resp.json()
+            if data.get("results"):
+                return data["results"][0]["primaryAccession"]
+        except Exception as e:
+            logger.error("Uniprot Search Error: %s", e)
         return None
 
     async def fetch_structure(
@@ -75,14 +76,13 @@ class StructureAgent:
         pdb_content = None
         pdb_url = ""
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            for v in versions:
-                url = f"{self.af_db_url}/AF-{uniprot_id}-F1-model_{v}.pdb"
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    pdb_content = resp.text
-                    pdb_url = url
-                    break
+        for v in versions:
+            url = f"{self.af_db_url}/AF-{uniprot_id}-F1-model_{v}.pdb"
+            resp = await self.client.get(url)
+            if resp.status_code == 200:
+                pdb_content = resp.text
+                pdb_url = url
+                break
 
         if not pdb_content:
             return {"error": f"AlphaFold structure not found for {uniprot_id}"}

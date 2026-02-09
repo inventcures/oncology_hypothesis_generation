@@ -18,7 +18,9 @@ class ModelAgent:
     3. Problematic cell line database - Contamination/misidentification warnings
     """
 
-    def __init__(self):
+    def __init__(self, client: Optional[httpx.AsyncClient] = None):
+        self.client = client or httpx.AsyncClient(timeout=30.0)
+        self._owns_client = client is None
         self.cellosaurus_url = "https://api.cellosaurus.org/search/cell-line"
         self.depmap_base_url = "https://api.cellmodelpassports.sanger.ac.uk/api/v1"
 
@@ -186,54 +188,48 @@ class ModelAgent:
 
         candidates = []
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                params = {"q": query, "format": "json", "rows": 50}
-                resp = await client.get(self.cellosaurus_url, params=params)
+        try:
+            params = {"q": query, "format": "json", "rows": 50}
+            resp = await self.client.get(self.cellosaurus_url, params=params)
 
-                if resp.status_code == 200:
-                    data = resp.json()
+            if resp.status_code == 200:
+                data = resp.json()
 
-                    for hit in data.get("response", {}).get("docs", []):
-                        name = hit.get("id", "Unknown")
-                        accession = hit.get("ac", "")
+                for hit in data.get("response", {}).get("docs", []):
+                    name = hit.get("id", "Unknown")
+                    accession = hit.get("ac", "")
 
-                        # Parse disease information
-                        diseases = hit.get("di", [])
-                        disease_str = diseases[0] if diseases else "Unknown"
+                    diseases = hit.get("di", [])
+                    disease_str = diseases[0] if diseases else "Unknown"
 
-                        # Parse cell type
-                        cell_type = hit.get("ca", "Unknown")
+                    cell_type = hit.get("ca", "Unknown")
 
-                        # Parse species
-                        species = (
-                            hit.get("ox", ["Unknown"])[0]
-                            if hit.get("ox")
-                            else "Unknown"
-                        )
+                    species = (
+                        hit.get("ox", ["Unknown"])[0]
+                        if hit.get("ox")
+                        else "Unknown"
+                    )
 
-                        # Parse sex
-                        sex = hit.get("sx", "Unknown")
+                    sex = hit.get("sx", "Unknown")
 
-                        # Parse references
-                        refs = hit.get("rx", [])
+                    refs = hit.get("rx", [])
 
-                        candidates.append(
-                            {
-                                "name": name,
-                                "accession": accession,
-                                "tissue": tissue,
-                                "disease": disease_str,
-                                "cell_type": cell_type,
-                                "species": species,
-                                "sex": sex,
-                                "reference_count": len(refs),
-                                "source": "Cellosaurus",
-                            }
-                        )
+                    candidates.append(
+                        {
+                            "name": name,
+                            "accession": accession,
+                            "tissue": tissue,
+                            "disease": disease_str,
+                            "cell_type": cell_type,
+                            "species": species,
+                            "sex": sex,
+                            "reference_count": len(refs),
+                            "source": "Cellosaurus",
+                        }
+                    )
 
-            except Exception as e:
-                logger.error("Cellosaurus API error: %s", e)
+        except Exception as e:
+            logger.error("Cellosaurus API error: %s", e)
 
         return candidates
 
@@ -244,58 +240,52 @@ class ModelAgent:
 
         candidates = []
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                # Query cell models endpoint
-                # Cell Model Passports API: https://cellmodelpassports.sanger.ac.uk/
-                params = {"tissue": tissue, "page_size": 50}
-                resp = await client.get(f"{self.depmap_base_url}/models", params=params)
+        try:
+            params = {"tissue": tissue, "page_size": 50}
+            resp = await self.client.get(f"{self.depmap_base_url}/models", params=params)
 
-                if resp.status_code == 200:
-                    data = resp.json()
+            if resp.status_code == 200:
+                data = resp.json()
 
-                    for model in data.get("data", []):
-                        name = model.get("model_name", "Unknown")
+                for model in data.get("data", []):
+                    name = model.get("model_name", "Unknown")
 
-                        # Extract available data types
-                        available_data = []
-                        if model.get("has_wes"):
-                            available_data.append("WES")
-                        if model.get("has_wgs"):
-                            available_data.append("WGS")
-                        if model.get("has_rnaseq"):
-                            available_data.append("RNA-seq")
-                        if model.get("has_drug_response"):
-                            available_data.append("Drug Response")
-                        if model.get("has_crispr"):
-                            available_data.append("CRISPR")
-                        if model.get("has_methylation"):
-                            available_data.append("Methylation")
+                    available_data = []
+                    if model.get("has_wes"):
+                        available_data.append("WES")
+                    if model.get("has_wgs"):
+                        available_data.append("WGS")
+                    if model.get("has_rnaseq"):
+                        available_data.append("RNA-seq")
+                    if model.get("has_drug_response"):
+                        available_data.append("Drug Response")
+                    if model.get("has_crispr"):
+                        available_data.append("CRISPR")
+                    if model.get("has_methylation"):
+                        available_data.append("Methylation")
 
-                        # Extract mutations if available
-                        mutations = model.get("mutations", [])
+                    mutations = model.get("mutations", [])
 
-                        candidates.append(
-                            {
-                                "name": name,
-                                "depmap_id": model.get("model_id", ""),
-                                "tissue": model.get("tissue", tissue),
-                                "disease": model.get("cancer_type", "Unknown"),
-                                "disease_subtype": model.get("cancer_type_detail", ""),
-                                "available_data": available_data,
-                                "data_richness": len(available_data),
-                                "mutations": mutations,
-                                "growth_properties": model.get("growth_properties", ""),
-                                "source": "DepMap",
-                            }
-                        )
+                    candidates.append(
+                        {
+                            "name": name,
+                            "depmap_id": model.get("model_id", ""),
+                            "tissue": model.get("tissue", tissue),
+                            "disease": model.get("cancer_type", "Unknown"),
+                            "disease_subtype": model.get("cancer_type_detail", ""),
+                            "available_data": available_data,
+                            "data_richness": len(available_data),
+                            "mutations": mutations,
+                            "growth_properties": model.get("growth_properties", ""),
+                            "source": "DepMap",
+                        }
+                    )
 
-            except Exception as e:
-                logger.error("DepMap API error: %s", e)
+        except Exception as e:
+            logger.error("DepMap API error: %s", e)
 
-                # Fallback: Return some well-known cancer cell lines
-                fallback_lines = self._get_fallback_lines(tissue, gene)
-                candidates.extend(fallback_lines)
+            fallback_lines = self._get_fallback_lines(tissue, gene)
+            candidates.extend(fallback_lines)
 
         return candidates
 

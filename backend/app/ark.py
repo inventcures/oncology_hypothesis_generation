@@ -18,10 +18,11 @@ import networkx as nx
 import httpx
 import asyncio
 import logging
+import re
 from typing import List, Dict, Any, Optional
 
 from .entity_extraction import get_extractor, OncologyEntityExtractor
-from .kg_builder import KnowledgeGraphBuilder
+from .kg_builder import KnowledgeGraphBuilder, entity_text
 
 logger = logging.getLogger(__name__)
 
@@ -234,8 +235,6 @@ class OncoGraph:
                 for gene_item in self._last_extraction.get("entities", {}).get(
                     "gene", []
                 ):
-                    from .kg_builder import entity_text
-
                     gname = entity_text(gene_item)
                     if gname and gname != seed_name:
                         self.kg_builder.add_pathway_enrichment(gname)
@@ -261,9 +260,6 @@ class OncoGraph:
                     key=lambda g: g.get("confidence", 0) if isinstance(g, dict) else 0,
                 )
                 return best if isinstance(best, str) else best.get("text", "")
-
-        # Regex fallback for gene-like patterns
-        import re
 
         match = re.search(r"\b([A-Z][A-Z0-9]{2,7})\b", query_text)
         return match.group(1) if match else None

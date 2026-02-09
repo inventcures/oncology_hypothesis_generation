@@ -31,8 +31,9 @@ class ProtocolAgent:
     3. Cell line-specific optimization
     """
 
-    def __init__(self):
-        # Check for LLM API keys
+    def __init__(self, client: Optional[httpx.AsyncClient] = None):
+        self.client = client or httpx.AsyncClient(timeout=60.0)
+        self._owns_client = client is None
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
 
@@ -358,32 +359,29 @@ class ProtocolAgent:
     async def _fetch_gene_sequence(self, gene: str) -> Optional[str]:
         """Fetch gene coding sequence from Ensembl."""
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                # First, get gene ID
-                url = f"https://rest.ensembl.org/lookup/symbol/homo_sapiens/{gene}"
-                resp = await client.get(
-                    url, headers={"Content-Type": "application/json"}
-                )
+        try:
+            url = f"https://rest.ensembl.org/lookup/symbol/homo_sapiens/{gene}"
+            resp = await self.client.get(
+                url, headers={"Content-Type": "application/json"}
+            )
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    gene_id = data.get("id")
+            if resp.status_code == 200:
+                data = resp.json()
+                gene_id = data.get("id")
 
-                    if gene_id:
-                        # Get sequence
-                        seq_url = (
-                            f"https://rest.ensembl.org/sequence/id/{gene_id}?type=cds"
-                        )
-                        seq_resp = await client.get(
-                            seq_url, headers={"Content-Type": "text/plain"}
-                        )
+                if gene_id:
+                    seq_url = (
+                        f"https://rest.ensembl.org/sequence/id/{gene_id}?type=cds"
+                    )
+                    seq_resp = await self.client.get(
+                        seq_url, headers={"Content-Type": "text/plain"}
+                    )
 
-                        if seq_resp.status_code == 200:
-                            return seq_resp.text[:3000]  # First 3kb
+                    if seq_resp.status_code == 200:
+                        return seq_resp.text[:3000]
 
-            except Exception as e:
-                logger.error("Ensembl API error: %s", e)
+        except Exception as e:
+            logger.error("Ensembl API error: %s", e)
 
         return None
 
@@ -418,60 +416,50 @@ Format as clean markdown suitable for a lab notebook."""
     async def _call_openai(self, prompt: str) -> str:
         """Call OpenAI API."""
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            try:
-                resp = await client.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.openai_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "gpt-4o-mini",
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": "You are an expert molecular biologist writing detailed lab protocols.",
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        "temperature": 0.3,
-                        "max_tokens": 2000,
-                    },
-                )
+        try:
+            resp = await self.client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.openai_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are an expert molecular biologist writing detailed lab protocols.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 2000,
+                },
+            )
 
-                if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"]
+            if resp.status_code == 200:
+                return resp.json()["choices"][0]["message"]["content"]
 
-            except Exception as e:
-                logger.error("OpenAI API error: %s", e)
+        except Exception as e:
+            logger.error("OpenAI API error: %s", e)
 
         return None
 
     async def _call_anthropic(self, prompt: str) -> str:
-        """Call Anthropic API."""
+        """Call Anthropic API using the official SDK."""
+        try:
+            import anthropic
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            try:
-                resp = await client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": self.anthropic_key,
-                        "anthropic-version": "2023-06-01",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "claude-3-haiku-20240307",
-                        "max_tokens": 2000,
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                )
+            client = anthropic.AsyncAnthropic(api_key=self.anthropic_key)
+            response = await client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text
 
-                if resp.status_code == 200:
-                    return resp.json()["content"][0]["text"]
-
-            except Exception as e:
-                logger.error("Anthropic API error: %s", e)
+        except Exception as e:
+            logger.error("Anthropic API error: %s", e)
 
         return None
 

@@ -12,16 +12,35 @@ Features:
 7. Auto-Rationale Synthesis - LLM summary
 """
 
+import json
 import httpx
 import asyncio
 import logging
+import math
 import os
 import re
-from typing import Dict, List, Optional, Any, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional, Any, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 from enum import Enum
 
+if TYPE_CHECKING:
+    from .clinical_trials import ClinicalTrialsClient
+
 logger = logging.getLogger(__name__)
+
+_DATA_DIR = Path(__file__).parent / "data"
+
+
+def _load_validation_data() -> Dict[str, Any]:
+    path = _DATA_DIR / "validation_data.json"
+    if path.exists():
+        with open(path) as f:
+            return json.load(f)
+    return {}
+
+
+_VALIDATION_DATA = _load_validation_data()
 
 
 class ValidationStatus(Enum):
@@ -44,12 +63,17 @@ class ValidationAgent:
     Unified validation agent for hypothesis sanity checks.
     """
 
-    def __init__(self):
-        self.client = httpx.AsyncClient(timeout=30.0)
+    def __init__(
+        self,
+        client: Optional[httpx.AsyncClient] = None,
+        ct_client: Optional["ClinicalTrialsClient"] = None,
+    ):
+        self.client = client or httpx.AsyncClient(timeout=30.0)
+        self._owns_client = client is None
+        self._ct_client = ct_client
         self.depmap_url = "https://api.cellmodelpassports.sanger.ac.uk/api/v1"
         self.cbioportal_url = "https://www.cbioportal.org/api"
         self.opentargets_url = "https://api.platform.opentargets.org/api/v4/graphql"
-        self.clinicaltrials_url = "https://clinicaltrials.gov/api/v2/studies"
         self.gtex_url = "https://gtexportal.org/api/v2"
 
         # LLM keys for synthesis
@@ -276,19 +300,7 @@ class ValidationAgent:
     def _fallback_essentiality(self, gene: str, cancer_type: str) -> Dict:
         """Fallback essentiality data for common genes."""
 
-        # Known essential genes by cancer type (curated from literature)
-        essential_genes = {
-            "KRAS": {"lung": -1.2, "pancreas": -1.4, "colorectal": -1.1},
-            "EGFR": {"lung": -0.9, "glioblastoma": -1.1},
-            "BRAF": {"melanoma": -1.3, "colorectal": -0.8},
-            "MYC": {"lymphoma": -1.5, "breast": -0.9},
-            "BCL2": {"lymphoma": -1.4, "leukemia": -1.2},
-            "CDK4": {"breast": -0.8, "melanoma": -0.9},
-            "PIK3CA": {"breast": -0.7, "colorectal": -0.6},
-            "TP53": {"universal": -0.3},  # Tumor suppressor, not a dependency
-            "STK11": {"lung": -0.4},
-            "YAP1": {"mesothelioma": -1.0, "liver": -0.9},
-        }
+        essential_genes = _VALIDATION_DATA.get("essential_genes", {})
 
         gene_upper = gene.upper()
         cancer_lower = cancer_type.lower()
@@ -434,23 +446,9 @@ class ValidationAgent:
         proxy (mutated vs wild-type) since expression data requires a separate
         molecular-profile query. Then compute log-rank-like statistics.
         """
-        import math
 
-        # Map cancer type to TCGA study ID
-        study_map = {
-            "lung": "luad_tcga",
-            "breast": "brca_tcga",
-            "colorectal": "coadread_tcga",
-            "pancreas": "paad_tcga",
-            "melanoma": "skcm_tcga",
-            "glioblastoma": "gbm_tcga",
-            "ovarian": "ov_tcga",
-            "prostate": "prad_tcga",
-            "liver": "lihc_tcga",
-            "kidney": "kirc_tcga",
-            "nsclc": "luad_tcga",
-            "mesothelioma": "meso_tcga",
-        }
+
+        study_map = _VALIDATION_DATA.get("tcga_study_map", {})
 
         cancer_lower = cancer_type.lower()
         study_id = None
@@ -607,17 +605,7 @@ class ValidationAgent:
     def _fallback_survival(self, gene: str, cancer_type: str) -> Dict:
         """Fallback survival data for common genes."""
 
-        # Known prognostic markers (from literature)
-        prognostic_genes = {
-            "KRAS": {"lung": (1.8, 0.001), "pancreas": (2.1, 0.0001)},
-            "TP53": {"breast": (1.6, 0.01), "colorectal": (1.5, 0.02)},
-            "EGFR": {"lung": (1.4, 0.03), "glioblastoma": (1.7, 0.01)},
-            "MYC": {"lymphoma": (2.0, 0.001), "breast": (1.5, 0.02)},
-            "BRAF": {"melanoma": (1.3, 0.05), "colorectal": (1.9, 0.001)},
-            "STK11": {"lung": (1.9, 0.001)},
-            "YAP1": {"mesothelioma": (1.7, 0.01), "liver": (1.6, 0.02)},
-            "HER2": {"breast": (1.8, 0.001), "gastric": (1.6, 0.01)},
-        }
+        prognostic_genes = _VALIDATION_DATA.get("prognostic_genes", {})
 
         gene_upper = gene.upper()
         cancer_lower = cancer_type.lower()
@@ -674,7 +662,7 @@ class ValidationAgent:
     def _generate_synthetic_km(self, hr: float) -> Dict:
         """Generate synthetic Kaplan-Meier curve data for visualization."""
 
-        import math
+
 
         # Generate time points (months)
         times = list(range(0, 61, 6))
@@ -798,16 +786,9 @@ class ValidationAgent:
     def _fallback_toxicity(self, gene: str) -> Dict:
         """Fallback toxicity data."""
 
-        # Genes with known safety concerns
-        high_toxicity_genes = {
-            "BCL2": ["Bone Marrow", "Lymph Node"],
-            "EGFR": ["Skin", "Lung", "Kidney"],
-            "VEGF": ["Heart", "Kidney"],
-            "CDK4": ["Bone Marrow"],
-            "MYC": ["Bone Marrow", "Small Intestine"],
-        }
-
-        safe_genes = ["KRAS", "BRAF", "PIK3CA", "STK11", "YAP1"]
+        toxicity_profiles = _VALIDATION_DATA.get("toxicity_profiles", {})
+        high_toxicity_genes = toxicity_profiles.get("high_toxicity", {})
+        safe_genes = toxicity_profiles.get("safe_genes", [])
 
         gene_upper = gene.upper()
 
@@ -1041,59 +1022,7 @@ class ValidationAgent:
     def _fallback_drugability(self, gene: str) -> Dict:
         """Fallback drugability data."""
 
-        drug_data = {
-            "EGFR": {
-                "approved": ["Erlotinib", "Gefitinib", "Osimertinib", "Afatinib"],
-                "clinical": ["Amivantamab", "Lazertinib"],
-                "modalities": ["Small molecule", "Antibody"],
-            },
-            "BRAF": {
-                "approved": ["Vemurafenib", "Dabrafenib", "Encorafenib"],
-                "clinical": [],
-                "modalities": ["Small molecule"],
-            },
-            "KRAS": {
-                "approved": ["Sotorasib", "Adagrasib"],  # G12C only
-                "clinical": ["MRTX1133", "RMC-6236"],
-                "modalities": ["Small molecule", "PROTAC"],
-            },
-            "HER2": {
-                "approved": ["Trastuzumab", "Pertuzumab", "T-DM1", "Tucatinib"],
-                "clinical": [],
-                "modalities": ["Antibody", "ADC", "Small molecule"],
-            },
-            "BCL2": {
-                "approved": ["Venetoclax"],
-                "clinical": [],
-                "modalities": ["BH3 mimetic"],
-            },
-            "PIK3CA": {
-                "approved": ["Alpelisib"],
-                "clinical": ["Inavolisib"],
-                "modalities": ["Small molecule"],
-            },
-            "CDK4": {
-                "approved": ["Palbociclib", "Ribociclib", "Abemaciclib"],
-                "clinical": [],
-                "modalities": ["Small molecule"],
-            },
-            "MYC": {
-                "approved": [],
-                "clinical": [],
-                "preclinical": ["OMOMYC"],
-                "modalities": ["Undrugged - transcription factor"],
-            },
-            "YAP1": {
-                "approved": [],
-                "clinical": ["IAG933", "VT3989"],
-                "modalities": ["TEAD inhibitor"],
-            },
-            "STK11": {
-                "approved": [],
-                "clinical": [],
-                "modalities": ["Tumor suppressor - not directly druggable"],
-            },
-        }
+        drug_data = _VALIDATION_DATA.get("drug_data", {})
 
         gene_upper = gene.upper()
 
@@ -1193,26 +1122,7 @@ class ValidationAgent:
     def _get_synthetic_lethality(self, gene: str) -> Optional[Dict]:
         """Get synthetic lethality partners."""
 
-        sl_pairs = {
-            "PARP1": {
-                "partners": ["BRCA1", "BRCA2", "ATM", "PALB2"],
-                "context": "DNA damage repair deficiency",
-            },
-            "PRMT5": {
-                "partners": ["MTAP"],
-                "context": "MTAP deletion creates metabolic vulnerability",
-            },
-            "WRN": {"partners": ["MSI-H"], "context": "Microsatellite instability"},
-            "KRAS": {
-                "partners": ["STK11", "KEAP1"],
-                "context": "Co-mutations affect response",
-            },
-            "SHP2": {
-                "partners": ["KRAS", "EGFR"],
-                "context": "RTK-RAS pathway dependency",
-            },
-        }
-
+        sl_pairs = _VALIDATION_DATA.get("synthetic_lethality", {})
         return sl_pairs.get(gene.upper())
 
     # =========================================================================
@@ -1241,7 +1151,10 @@ class ValidationAgent:
                 "details": {"trials": []},
             }
 
-        active = [t for t in trials if t.get("status") in ["Recruiting", "Active"]]
+        active = [
+            t for t in trials
+            if t.get("status", "").startswith(("Recruiting", "Active"))
+        ]
         phase3 = [t for t in trials if "Phase 3" in t.get("phase", "")]
 
         if len(active) > 10 or phase3:
@@ -1277,46 +1190,27 @@ class ValidationAgent:
         }
 
     async def _fetch_clinical_trials(self, gene: str, disease: str) -> List[Dict]:
-        """Fetch clinical trials from ClinicalTrials.gov."""
+        """Fetch clinical trials, delegating to ClinicalTrialsClient if available."""
+        if self._ct_client:
+            result = await self._ct_client.search_trials(gene=gene, disease=disease)
+            return result.get("trials", [])
 
         try:
-            # New ClinicalTrials.gov API v2
             params = {
                 "query.term": f"{gene} {disease}",
                 "filter.overallStatus": "RECRUITING,ACTIVE_NOT_RECRUITING",
                 "pageSize": 20,
             }
-
-            resp = await self.client.get(self.clinicaltrials_url, params=params)
-
+            resp = await self.client.get(
+                "https://clinicaltrials.gov/api/v2/studies", params=params
+            )
             if resp.status_code == 200:
-                data = resp.json()
-                studies = data.get("studies", [])
+                from .clinical_trials import ClinicalTrialsClient
 
+                data = resp.json()
                 return [
-                    {
-                        "nct_id": s.get("protocolSection", {})
-                        .get("identificationModule", {})
-                        .get("nctId"),
-                        "title": s.get("protocolSection", {})
-                        .get("identificationModule", {})
-                        .get("briefTitle"),
-                        "status": s.get("protocolSection", {})
-                        .get("statusModule", {})
-                        .get("overallStatus"),
-                        "phase": s.get("protocolSection", {})
-                        .get("designModule", {})
-                        .get("phases", [""])[0]
-                        if s.get("protocolSection", {})
-                        .get("designModule", {})
-                        .get("phases")
-                        else "",
-                        "sponsor": s.get("protocolSection", {})
-                        .get("sponsorCollaboratorsModule", {})
-                        .get("leadSponsor", {})
-                        .get("name"),
-                    }
-                    for s in studies
+                    ClinicalTrialsClient._parse_study(s)
+                    for s in data.get("studies", [])
                 ]
         except Exception as e:
             logger.warning("ClinicalTrials.gov API error: %s", e)

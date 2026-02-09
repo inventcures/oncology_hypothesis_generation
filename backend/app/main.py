@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
 import asyncio
 import json
 import logging
@@ -11,7 +11,25 @@ import time
 logger = logging.getLogger(__name__)
 
 from .ark import OncoGraph, OpenTargetsClient
-from .ttt import TTTAdapter
+from .ttt import QueryAdaptiveRanker
+from .constants import (
+    ACTIVATION_GLOW_THRESHOLD,
+    ACTIVATION_RADIUS_BOOST,
+    DEFAULT_NODE_RADIUS,
+    MAX_HYPOTHESES,
+    MAX_NODE_RADIUS,
+    PROPAGATION_DECAY,
+    PROPAGATION_EFFECT_THRESHOLD,
+    PROPAGATION_MAX_HOPS,
+    MAX_AFFECTED_NODES_RETURNED,
+    DOSSIER_WEIGHT_VALIDATION,
+    DOSSIER_WEIGHT_DRUGGABILITY,
+    DOSSIER_WEIGHT_IP_FREEDOM,
+    DOSSIER_WEIGHT_CLINICAL,
+    DOSSIER_WEIGHT_MODEL,
+    DOSSIER_WEIGHT_LITERATURE,
+    TRIAL_SWEET_SPOT_MAX,
+)
 from .literature import LiteratureAgent
 from .atlas import AtlasAgent
 from .structure import StructureAgent
@@ -23,14 +41,18 @@ from .orchestrator import AgentOrchestrator
 from .entity_extraction import get_extractor
 from .clinical_trials import ClinicalTrialsClient
 
+import httpx
+import os
 from contextlib import asynccontextmanager
+
+shared_client = httpx.AsyncClient(timeout=60.0)
 
 
 @asynccontextmanager
 async def lifespan(app_instance):
-    """Startup/shutdown lifecycle — properly close persistent HTTP clients."""
+    """Startup/shutdown lifecycle — properly close all persistent HTTP clients."""
     yield
-    # Shutdown: close all persistent httpx clients
+    await shared_client.aclose()
     await ot_client.client.aclose()
     await lit_agent.client.aclose()
 
@@ -42,34 +64,61 @@ app = FastAPI(
 )
 
 # Enable CORS for frontend
-origins = [
-    "http://localhost:3000",
-    "https://onco-ttt-frontend.up.railway.app",
-    "https://onco-hypothesis.up.railway.app",
-    "https://onco-hypothesis-generation.up.railway.app",
-]
+allowed_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,https://onco-ttt-frontend.up.railway.app,https://onco-hypothesis.up.railway.app,https://onco-hypothesis-generation.up.railway.app",
+).split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- Cache-Control headers for GET endpoints ---
+NO_CACHE_PATHS = {"/", "/health", "/orchestrator/stats"}
+LONG_CACHE_PATHS = {"/gliner2/info"}
+
+
+@app.middleware("http")
+async def add_cache_headers(request, call_next):
+    response = await call_next(request)
+    if request.method == "GET" and "cache-control" not in response.headers:
+        path = request.url.path
+        if path in NO_CACHE_PATHS:
+            response.headers["cache-control"] = "no-cache"
+        elif path in LONG_CACHE_PATHS:
+            response.headers["cache-control"] = "public, max-age=3600"
+        else:
+            response.headers["cache-control"] = "public, max-age=300"
+    return response
+
+
+# --- API Key Auth (optional, for credit-burning endpoints) ---
+API_KEY = os.getenv("ONCO_API_KEY")
+
+
+async def verify_api_key(x_api_key: Optional[str] = Header(None)):
+    """Require API key if ONCO_API_KEY is set. No-op if unset (dev mode)."""
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 # --- Global State ---
 # OncoGraph is NOT global — it is created per-request to avoid concurrent state corruption.
 # Only the stateless OpenTargetsClient is shared (holds a persistent httpx connection pool).
 ot_client = OpenTargetsClient()
-ttt_engine = TTTAdapter()
+ttt_engine = QueryAdaptiveRanker()
 lit_agent = LiteratureAgent()
 atlas_agent = AtlasAgent()
-structure_agent = StructureAgent()
-patent_agent = PatentAgent()
-model_agent = ModelAgent()
-protocol_agent = ProtocolAgent()
-validation_agent = ValidationAgent()
-ct_client = ClinicalTrialsClient()
+structure_agent = StructureAgent(client=shared_client)
+patent_agent = PatentAgent(client=shared_client)
+model_agent = ModelAgent(client=shared_client)
+protocol_agent = ProtocolAgent(client=shared_client)
+ct_client = ClinicalTrialsClient(client=shared_client)
+validation_agent = ValidationAgent(client=shared_client, ct_client=ct_client)
 
 # Agent Orchestrator for smart routing (Claude Agents SDK)
 orchestrator = AgentOrchestrator(
@@ -142,6 +191,23 @@ class KGBuildRequest(BaseModel):
     height: float = 600
 
 
+class DossierRequest(BaseModel):
+    gene: str = Field(..., min_length=1, max_length=100)
+    disease: str = Field(default="Cancer", max_length=200)
+    mutation: Optional[str] = Field(default=None, max_length=100)
+    cancer_type: Optional[str] = Field(default=None, max_length=200)
+    tissue: str = Field(default="lung", max_length=50)
+
+    def resolved_cancer_type(self) -> str:
+        return self.cancer_type or self.disease
+
+
+class SimulateRequest(BaseModel):
+    target_node: str = Field(..., min_length=1, max_length=200)
+    perturbation_type: Literal["inhibit", "activate", "knockout"] = "inhibit"
+    query: str = Field(..., min_length=1, max_length=2000)
+
+
 # --- Tissue Inference (single source of truth for backend) ---
 
 TISSUE_MAP = [
@@ -166,6 +232,74 @@ def _infer_tissue(query_text: str) -> str:
     return "lung"
 
 
+# --- Shared Helpers ---
+
+
+def _build_adjacency(links: List[Dict]) -> Dict[str, List[Dict]]:
+    """Pre-index links into a source→[link] adjacency map for O(1) lookups."""
+    adj: Dict[str, List[Dict]] = {}
+    for link in links:
+        src = link.get("source", "")
+        tgt = link.get("target", "")
+        adj.setdefault(src, []).append(link)
+        adj.setdefault(tgt, []).append(link)
+    return adj
+
+
+def _collect_evidence(
+    node_id: str,
+    node_label: str,
+    links: List[Dict],
+    partner_pool: List[Dict],
+    default_relation: str = "associated_with",
+    max_items: int = 5,
+    adj: Optional[Dict[str, List[Dict]]] = None,
+) -> List[Dict[str, Any]]:
+    """Build evidence trail: edges connecting node_id to any node in partner_pool."""
+    partner_map = {p.get("id"): p for p in partner_pool}
+    relevant_links = adj.get(node_id, []) if adj else links
+    items: List[Dict[str, Any]] = []
+    for link in relevant_links:
+        src, tgt = link.get("source"), link.get("target")
+        if src == node_id and tgt in partner_map:
+            partner = partner_map[tgt]
+            items.append({
+                "type": "graph_edge",
+                "source": node_label,
+                "target": partner.get("label") or partner.get("id"),
+                "relation": link.get("relation", default_relation),
+                "weight": link.get("weight", 0.5),
+            })
+        elif tgt == node_id and src in partner_map:
+            partner = partner_map[src]
+            items.append({
+                "type": "graph_edge",
+                "source": partner.get("label") or partner.get("id"),
+                "target": node_label,
+                "relation": link.get("relation", default_relation),
+                "weight": link.get("weight", 0.5),
+            })
+        if len(items) >= max_items:
+            break
+    return items
+
+
+def _inject_activations(
+    nodes: List[Dict], activations: Dict[str, float]
+) -> None:
+    """Inject activation scores into graph nodes for frontend rendering."""
+    for node in nodes:
+        node_id = node.get("id", "")
+        act_score = activations.get(node_id, 0.0)
+        node["relevance"] = act_score
+        if act_score > ACTIVATION_GLOW_THRESHOLD:
+            node["glow"] = True
+            node["radius"] = min(
+                node.get("radius", DEFAULT_NODE_RADIUS) * (1 + act_score * ACTIVATION_RADIUS_BOOST),
+                MAX_NODE_RADIUS,
+            )
+
+
 # --- Hypothesis Generation (dynamic, based on extracted entities & relations) ---
 
 
@@ -184,6 +318,7 @@ def _generate_hypotheses(
     act = activations or {}
     nodes = subgraph_data.get("nodes", [])
     links = subgraph_data.get("links", [])
+    adj = _build_adjacency(links)
     if not nodes:
         return [
             Hypothesis(
@@ -259,40 +394,9 @@ def _generate_hypotheses(
             h_idx += 1
             gene_relevance = act.get(gene.get("id", ""), 0.5)
             conf = min(0.95, 0.5 + weight * 0.25 + gene_relevance * 0.2)
-            # Build evidence trail: edges connecting this gene to diseases
-            evidence_items: List[Dict[str, Any]] = []
-            for link in links:
-                src, tgt = link.get("source"), link.get("target")
-                is_gene_src = src == gene.get("id")
-                is_gene_tgt = tgt == gene.get("id")
-                if is_gene_src and any(d.get("id") == tgt for d in diseases):
-                    evidence_items.append(
-                        {
-                            "type": "graph_edge",
-                            "source": gene_name,
-                            "target": next(
-                                (d.get("label") or d.get("id"))
-                                for d in diseases
-                                if d.get("id") == tgt
-                            ),
-                            "relation": link.get("relation", "associated_with"),
-                            "weight": link.get("weight", 0.5),
-                        }
-                    )
-                elif is_gene_tgt and any(d.get("id") == src for d in diseases):
-                    evidence_items.append(
-                        {
-                            "type": "graph_edge",
-                            "source": next(
-                                (d.get("label") or d.get("id"))
-                                for d in diseases
-                                if d.get("id") == src
-                            ),
-                            "target": gene_name,
-                            "relation": link.get("relation", "associated_with"),
-                            "weight": link.get("weight", 0.5),
-                        }
-                    )
+            evidence_items = _collect_evidence(
+                gene.get("id", ""), gene_name, links, diseases, adj=adj
+            )
             hypotheses.append(
                 Hypothesis(
                     id=f"h{h_idx}",
@@ -327,36 +431,10 @@ def _generate_hypotheses(
 
         if targets:
             h_idx += 1
-            # Build evidence trail: drug-target edges
-            evidence_items = []
-            for link in links:
-                relation = (link.get("relation") or "").lower()
-                if "target" in relation or "inhibit" in relation:
-                    src, tgt = link.get("source"), link.get("target")
-                    if src == drug.get("id"):
-                        t = next((n for n in genes if n.get("id") == tgt), None)
-                        if t:
-                            evidence_items.append(
-                                {
-                                    "type": "graph_edge",
-                                    "source": drug_name,
-                                    "target": t.get("label") or t.get("id"),
-                                    "relation": link.get("relation", "targets"),
-                                    "weight": link.get("weight", 0.5),
-                                }
-                            )
-                    elif tgt == drug.get("id"):
-                        t = next((n for n in genes if n.get("id") == src), None)
-                        if t:
-                            evidence_items.append(
-                                {
-                                    "type": "graph_edge",
-                                    "source": drug_name,
-                                    "target": t.get("label") or t.get("id"),
-                                    "relation": link.get("relation", "targets"),
-                                    "weight": link.get("weight", 0.5),
-                                }
-                            )
+            evidence_items = _collect_evidence(
+                drug.get("id", ""), drug_name, links, genes,
+                default_relation="targets", adj=adj
+            )
             hypotheses.append(
                 Hypothesis(
                     id=f"h{h_idx}",
@@ -376,23 +454,9 @@ def _generate_hypotheses(
         related_genes = [(g.get("label") or g.get("id")) for g in genes[:2]]
         context = related_mechs[:1] or related_genes[:1] or ["downstream effectors"]
         h_idx += 1
-        # Build evidence trail: edges connecting this mutation to other entities
-        evidence_items = []
-        for link in links:
-            src, tgt = link.get("source"), link.get("target")
-            if src == mut.get("id") or tgt == mut.get("id"):
-                partner_id = tgt if src == mut.get("id") else src
-                partner = next((n for n in nodes if n.get("id") == partner_id), None)
-                if partner:
-                    evidence_items.append(
-                        {
-                            "type": "graph_edge",
-                            "source": mut_name,
-                            "target": partner.get("label") or partner.get("id"),
-                            "relation": link.get("relation", "associated_with"),
-                            "weight": link.get("weight", 0.5),
-                        }
-                    )
+        evidence_items = _collect_evidence(
+            mut.get("id", ""), mut_name, links, nodes, adj=adj
+        )
         hypotheses.append(
             Hypothesis(
                 id=f"h{h_idx}",
@@ -421,25 +485,10 @@ def _generate_hypotheses(
                     linked_genes_in_pw.append(partner.get("label") or partner.get("id"))
         if linked_genes_in_pw:
             h_idx += 1
-            # Build evidence trail: pathway-gene edges
-            evidence_items = []
-            for link in links:
-                src, tgt = link.get("source"), link.get("target")
-                if src == pw.get("id") or tgt == pw.get("id"):
-                    partner_id = tgt if src == pw.get("id") else src
-                    partner = next(
-                        (n for n in genes if n.get("id") == partner_id), None
-                    )
-                    if partner:
-                        evidence_items.append(
-                            {
-                                "type": "graph_edge",
-                                "source": pw_name,
-                                "target": partner.get("label") or partner.get("id"),
-                                "relation": link.get("relation", "involves"),
-                                "weight": link.get("weight", 0.5),
-                            }
-                        )
+            evidence_items = _collect_evidence(
+                pw.get("id", ""), pw_name, links, genes,
+                default_relation="involves", adj=adj
+            )
             hypotheses.append(
                 Hypothesis(
                     id=f"h{h_idx}",
@@ -468,7 +517,7 @@ def _generate_hypotheses(
             )
         )
 
-    return hypotheses[:5]  # Cap at 5 hypotheses
+    return hypotheses[:MAX_HYPOTHESES]
 
 
 # --- Routes ---
@@ -479,7 +528,7 @@ def read_root():
     return {"message": "Onco-TTT API is running", "status": "active"}
 
 
-@app.post("/generate", response_model=GenerationResponse)
+@app.post("/generate", response_model=GenerationResponse, dependencies=[Depends(verify_api_key)])
 async def generate_hypotheses(query: Query):
     """
     Main hypothesis generation pipeline.
@@ -527,18 +576,7 @@ async def generate_hypotheses(query: Query):
     # 3. Get Rich Graph Data with Layout, colors, edge labels
     subgraph_data = req_graph.get_subgraph_data()
 
-    # Inject activation scores into graph nodes for frontend rendering
-    for node in subgraph_data.get("nodes", []):
-        node_id = node.get("id", "")
-        act_score = activations.get(node_id, 0.0)
-        node["relevance"] = act_score
-        # Boost radius and glow for highly relevant nodes
-        if act_score > 0.5:
-            node["glow"] = True
-            node["radius"] = min(node.get("radius", 22) * (1 + act_score * 0.3), 42)
-
-    # Identify novel connections discovered via propagation
-    novel_connections = ttt_engine.get_novel_connections(activations, query.text)
+    _inject_activations(subgraph_data.get("nodes", []), activations)
 
     # 4. Hypothesis Generation — dynamically from extracted entities & relations
     #    Pass activation scores so hypotheses prioritize high-relevance nodes
@@ -656,12 +694,17 @@ def gliner2_model_info():
 
 
 @app.get("/structure/{gene}")
-async def get_structure_analysis(gene: str, mutation: Optional[str] = None):
+async def get_structure_analysis(
+    gene: str, mutation: Optional[str] = None, include_pdb: bool = False
+):
     """
     Module A: Virtual Structural Biologist
     Fetches AlphaFold structure and predicts binding pockets.
     """
-    return await structure_agent.fetch_structure(gene, mutation)
+    result = await structure_agent.fetch_structure(gene, mutation)
+    if not include_pdb and isinstance(result, dict):
+        result.pop("pdb_content", None)
+    return result
 
 
 @app.get("/patents/check")
@@ -768,13 +811,13 @@ def get_orchestrator_stats():
     return orchestrator.get_stats()
 
 
-@app.post("/dossier")
-async def generate_dossier(req: dict):
-    gene = req.get("gene", "")
-    disease = req.get("disease", "Cancer")
-    mutation = req.get("mutation")
-    cancer_type = req.get("cancer_type", disease)
-    tissue = req.get("tissue", "lung")
+@app.post("/dossier", dependencies=[Depends(verify_api_key)])
+async def generate_dossier(req: DossierRequest):
+    gene = req.gene
+    disease = req.disease
+    mutation = req.mutation
+    cancer_type = req.resolved_cancer_type()
+    tissue = req.tissue
 
     # Run all analyses in parallel
     results = await asyncio.gather(
@@ -800,26 +843,24 @@ async def generate_dossier(req: dict):
     # Compute Go/No-Go score (weighted composite)
     scores = []
     if validation and isinstance(validation, dict):
-        scores.append(("validation", validation.get("overall_score", 0.5), 0.30))
+        scores.append(("validation", validation.get("overall_score", 0.5), DOSSIER_WEIGHT_VALIDATION))
     if structure and isinstance(structure, dict):
-        scores.append(("druggability", structure.get("druggability_score", 0.5), 0.20))
+        scores.append(("druggability", structure.get("druggability_score", 0.5), DOSSIER_WEIGHT_DRUGGABILITY))
     if patents and isinstance(patents, dict):
-        # Lower scooped score = better (less competition)
         patent_score = 1.0 - (patents.get("scooped_score", 50) / 100)
-        scores.append(("ip_freedom", patent_score, 0.15))
+        scores.append(("ip_freedom", patent_score, DOSSIER_WEIGHT_IP_FREEDOM))
     if trials and isinstance(trials, dict):
         trial_count = trials.get("summary", {}).get("total_count", 0)
-        # Some trials = validated target. Too many = crowded. Sweet spot 5-20.
         trial_score = (
-            min(1.0, trial_count / 20)
-            if trial_count <= 20
-            else max(0.3, 1.0 - (trial_count - 20) / 100)
+            min(1.0, trial_count / TRIAL_SWEET_SPOT_MAX)
+            if trial_count <= TRIAL_SWEET_SPOT_MAX
+            else max(0.3, 1.0 - (trial_count - TRIAL_SWEET_SPOT_MAX) / 100)
         )
-        scores.append(("clinical_validation", trial_score, 0.15))
+        scores.append(("clinical_validation", trial_score, DOSSIER_WEIGHT_CLINICAL))
     if models and isinstance(models, dict):
         top_pick = models.get("top_pick", {})
         model_score = (top_pick.get("match_score", 50) / 100) if top_pick else 0.5
-        scores.append(("model_availability", model_score, 0.10))
+        scores.append(("model_availability", model_score, DOSSIER_WEIGHT_MODEL))
     scores.append(("literature", min(1.0, len(papers) / 6) if papers else 0.3, 0.10))
 
     total_weight = sum(w for _, _, w in scores)
@@ -896,20 +937,15 @@ async def get_indication_expansion(gene: str, limit: int = 20):
     }
 
 
-@app.post("/simulate")
-async def simulate_perturbation(req: dict):
+@app.post("/simulate", dependencies=[Depends(verify_api_key)])
+async def simulate_perturbation(req: SimulateRequest):
     """
     Simulate what happens when a node is perturbed (inhibited/activated/knocked out).
     Uses spreading activation through the knowledge graph.
     """
-    target_node = req.get("target_node", "")
-    perturbation_type = req.get(
-        "perturbation_type", "inhibit"
-    )  # inhibit | activate | knockout
-    query_text = req.get("query", "")
-
-    if not target_node or not query_text:
-        return {"error": "target_node and query are required"}
+    target_node = req.target_node
+    perturbation_type = req.perturbation_type
+    query_text = req.query
 
     # Build the KG
     req_graph = OncoGraph()
@@ -927,11 +963,11 @@ async def simulate_perturbation(req: dict):
     effects = {target_node: signal}
     visited = {target_node}
     queue = [(target_node, signal, 0)]  # (node, effect, distance)
-    decay = 0.6
+    decay = PROPAGATION_DECAY
 
     while queue:
         current, current_effect, dist = queue.pop(0)
-        if dist >= 4:  # Max 4 hops
+        if dist >= PROPAGATION_MAX_HOPS:
             continue
         for neighbor in graph.neighbors(current):
             if neighbor in visited:
@@ -948,7 +984,7 @@ async def simulate_perturbation(req: dict):
                 propagation_sign = 1
 
             neighbor_effect = current_effect * decay * edge_weight * propagation_sign
-            if abs(neighbor_effect) > 0.05:  # Threshold
+            if abs(neighbor_effect) > PROPAGATION_EFFECT_THRESHOLD:
                 effects[neighbor] = neighbor_effect
                 queue.append((neighbor, neighbor_effect, dist + 1))
 
@@ -989,7 +1025,7 @@ async def simulate_perturbation(req: dict):
         "target_node": target_node,
         "perturbation_type": perturbation_type,
         "total_affected": len(affected_nodes),
-        "affected_nodes": affected_nodes[:30],
+        "affected_nodes": affected_nodes[:MAX_AFFECTED_NODES_RETURNED],
         "pathway_effects": pathway_effects,
         "graph": subgraph,  # Return updated graph for visualization
     }
@@ -1001,64 +1037,58 @@ async def get_mutation_frequency(gene: str):
     Get mutation frequency data from ICGC Data Portal (open access).
     Returns mutation counts across cancer types.
     """
-    import httpx
-
-    url = f"https://dcc.icgc.org/api/v1/genes/{gene}/mutations/counts"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            # Try gene symbol lookup first
-            search_resp = await client.get(
-                f"https://dcc.icgc.org/api/v1/genes", params={"query": gene, "size": 1}
-            )
-            gene_id = gene
-            if search_resp.status_code == 200:
-                hits = search_resp.json().get("hits", [])
-                if hits:
-                    gene_id = hits[0].get("id", gene)
+        search_resp = await shared_client.get(
+            "https://dcc.icgc.org/api/v1/genes", params={"query": gene, "size": 1}
+        )
+        gene_id = gene
+        if search_resp.status_code == 200:
+            hits = search_resp.json().get("hits", [])
+            if hits:
+                gene_id = hits[0].get("id", gene)
 
-            # Get mutation counts by project (cancer type)
-            mut_resp = await client.get(
-                f"https://dcc.icgc.org/api/v1/genes/{gene_id}/mutations",
-                params={
-                    "size": 50,
-                    "sort": "affectedDonorCountFiltered",
-                    "order": "desc",
-                },
-            )
+        mut_resp = await shared_client.get(
+            f"https://dcc.icgc.org/api/v1/genes/{gene_id}/mutations",
+            params={
+                "size": 50,
+                "sort": "affectedDonorCountFiltered",
+                "order": "desc",
+            },
+        )
 
-            if mut_resp.status_code != 200:
-                return {
-                    "gene": gene,
-                    "mutations": [],
-                    "source": "icgc",
-                    "error": f"ICGC returned {mut_resp.status_code}",
-                }
-
-            data = mut_resp.json()
-            hits = data.get("hits", [])
-
-            mutations = []
-            for hit in hits[:30]:
-                mutations.append(
-                    {
-                        "id": hit.get("id", ""),
-                        "mutation": hit.get("mutation", ""),
-                        "type": hit.get("type", ""),
-                        "chromosome": hit.get("chromosome", ""),
-                        "start": hit.get("start"),
-                        "consequence": hit.get("consequenceType", ""),
-                        "affected_donors": hit.get("affectedDonorCountFiltered", 0),
-                        "functional_impact": hit.get("functionalImpact", "Unknown"),
-                    }
-                )
-
+        if mut_resp.status_code != 200:
             return {
                 "gene": gene,
-                "gene_id": gene_id,
-                "total_mutations": data.get("pagination", {}).get("total", 0),
-                "mutations": mutations,
+                "mutations": [],
                 "source": "icgc",
+                "error": f"ICGC returned {mut_resp.status_code}",
             }
+
+        data = mut_resp.json()
+        hits = data.get("hits", [])
+
+        mutations = []
+        for hit in hits[:30]:
+            mutations.append(
+                {
+                    "id": hit.get("id", ""),
+                    "mutation": hit.get("mutation", ""),
+                    "type": hit.get("type", ""),
+                    "chromosome": hit.get("chromosome", ""),
+                    "start": hit.get("start"),
+                    "consequence": hit.get("consequenceType", ""),
+                    "affected_donors": hit.get("affectedDonorCountFiltered", 0),
+                    "functional_impact": hit.get("functionalImpact", "Unknown"),
+                }
+            )
+
+        return {
+            "gene": gene,
+            "gene_id": gene_id,
+            "total_mutations": data.get("pagination", {}).get("total", 0),
+            "mutations": mutations,
+            "source": "icgc",
+        }
     except Exception as e:
         logger.error("ICGC mutation frequency failed: %s", e)
         return {"gene": gene, "mutations": [], "source": "icgc", "error": str(e)}
@@ -1069,85 +1099,80 @@ async def get_chembl_bioactivity(gene: str, limit: int = 20):
     """
     Get bioactivity data (IC50, Ki, EC50) from ChEMBL for a target gene.
     """
-    import httpx
-
     base_url = "https://www.ebi.ac.uk/chembl/api/data"
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            # Step 1: Search for target
-            target_resp = await client.get(
-                f"{base_url}/target/search.json", params={"q": gene, "limit": 3}
-            )
+        target_resp = await shared_client.get(
+            f"{base_url}/target/search.json", params={"q": gene, "limit": 3}
+        )
 
-            if target_resp.status_code != 200:
-                return {
-                    "gene": gene,
-                    "activities": [],
-                    "error": f"ChEMBL target search failed: {target_resp.status_code}",
-                }
+        if target_resp.status_code != 200:
+            return {
+                "gene": gene,
+                "activities": [],
+                "error": f"ChEMBL target search failed: {target_resp.status_code}",
+            }
 
-            targets = target_resp.json().get("targets", [])
-            if not targets:
-                return {
-                    "gene": gene,
-                    "activities": [],
-                    "error": "Target not found in ChEMBL",
-                }
+        targets = target_resp.json().get("targets", [])
+        if not targets:
+            return {
+                "gene": gene,
+                "activities": [],
+                "error": "Target not found in ChEMBL",
+            }
 
-            target_chembl_id = targets[0].get("target_chembl_id", "")
-            target_name = targets[0].get("pref_name", gene)
+        target_chembl_id = targets[0].get("target_chembl_id", "")
+        target_name = targets[0].get("pref_name", gene)
 
-            # Step 2: Get bioactivities for this target
-            activity_resp = await client.get(
-                f"{base_url}/activity.json",
-                params={
-                    "target_chembl_id": target_chembl_id,
-                    "limit": limit,
-                    "standard_type__in": "IC50,Ki,EC50,Kd",
-                    "pchembl_value__isnull": "false",
-                    "order_by": "-pchembl_value",
-                },
-            )
+        activity_resp = await shared_client.get(
+            f"{base_url}/activity.json",
+            params={
+                "target_chembl_id": target_chembl_id,
+                "limit": limit,
+                "standard_type__in": "IC50,Ki,EC50,Kd",
+                "pchembl_value__isnull": "false",
+                "order_by": "-pchembl_value",
+            },
+        )
 
-            if activity_resp.status_code != 200:
-                return {
-                    "gene": gene,
-                    "target_chembl_id": target_chembl_id,
-                    "activities": [],
-                    "error": f"ChEMBL activity fetch failed",
-                }
-
-            activities_data = activity_resp.json().get("activities", [])
-
-            activities = []
-            seen_molecules = set()
-            for act in activities_data:
-                mol_id = act.get("molecule_chembl_id", "")
-                if mol_id in seen_molecules:
-                    continue
-                seen_molecules.add(mol_id)
-                activities.append(
-                    {
-                        "molecule_chembl_id": mol_id,
-                        "molecule_name": act.get("molecule_pref_name") or mol_id,
-                        "standard_type": act.get("standard_type", ""),
-                        "standard_value": act.get("standard_value"),
-                        "standard_units": act.get("standard_units", ""),
-                        "pchembl_value": act.get("pchembl_value"),
-                        "assay_type": act.get("assay_type", ""),
-                        "assay_description": act.get("assay_description", ""),
-                    }
-                )
-
+        if activity_resp.status_code != 200:
             return {
                 "gene": gene,
                 "target_chembl_id": target_chembl_id,
-                "target_name": target_name,
-                "total_activities": len(activities),
-                "activities": activities,
-                "source": "chembl",
+                "activities": [],
+                "error": "ChEMBL activity fetch failed",
             }
+
+        activities_data = activity_resp.json().get("activities", [])
+
+        activities = []
+        seen_molecules = set()
+        for act in activities_data:
+            mol_id = act.get("molecule_chembl_id", "")
+            if mol_id in seen_molecules:
+                continue
+            seen_molecules.add(mol_id)
+            activities.append(
+                {
+                    "molecule_chembl_id": mol_id,
+                    "molecule_name": act.get("molecule_pref_name") or mol_id,
+                    "standard_type": act.get("standard_type", ""),
+                    "standard_value": act.get("standard_value"),
+                    "standard_units": act.get("standard_units", ""),
+                    "pchembl_value": act.get("pchembl_value"),
+                    "assay_type": act.get("assay_type", ""),
+                    "assay_description": act.get("assay_description", ""),
+                }
+            )
+
+        return {
+            "gene": gene,
+            "target_chembl_id": target_chembl_id,
+            "target_name": target_name,
+            "total_activities": len(activities),
+            "activities": activities,
+            "source": "chembl",
+        }
     except Exception as e:
         logger.error("ChEMBL bioactivity failed: %s", e)
         return {"gene": gene, "activities": [], "source": "chembl", "error": str(e)}
@@ -1158,54 +1183,49 @@ async def get_drug_safety(drug_name: str, limit: int = 10):
     """
     Get adverse event reports from OpenFDA for a drug.
     """
-    import httpx
-
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            # Search adverse events
-            resp = await client.get(
-                "https://api.fda.gov/drug/event.json",
-                params={
-                    "search": f'patient.drug.medicinalproduct:"{drug_name}"',
-                    "count": "patient.reaction.reactionmeddrapt.exact",
-                    "limit": limit,
-                },
-            )
+        resp = await shared_client.get(
+            "https://api.fda.gov/drug/event.json",
+            params={
+                "search": f'patient.drug.medicinalproduct:"{drug_name}"',
+                "count": "patient.reaction.reactionmeddrapt.exact",
+                "limit": limit,
+            },
+        )
 
-            if resp.status_code != 200:
-                return {
-                    "drug": drug_name,
-                    "adverse_events": [],
-                    "error": f"OpenFDA returned {resp.status_code}",
-                }
-
-            data = resp.json()
-            results = data.get("results", [])
-
-            adverse_events = [
-                {"reaction": r.get("term", ""), "count": r.get("count", 0)}
-                for r in results
-            ]
-
-            # Also get total report count
-            count_resp = await client.get(
-                "https://api.fda.gov/drug/event.json",
-                params={
-                    "search": f'patient.drug.medicinalproduct:"{drug_name}"',
-                    "limit": 1,
-                },
-            )
-            total_reports = 0
-            if count_resp.status_code == 200:
-                meta = count_resp.json().get("meta", {}).get("results", {})
-                total_reports = meta.get("total", 0)
-
+        if resp.status_code != 200:
             return {
                 "drug": drug_name,
-                "total_reports": total_reports,
-                "top_adverse_events": adverse_events,
-                "source": "openfda",
+                "adverse_events": [],
+                "error": f"OpenFDA returned {resp.status_code}",
             }
+
+        data = resp.json()
+        results = data.get("results", [])
+
+        adverse_events = [
+            {"reaction": r.get("term", ""), "count": r.get("count", 0)}
+            for r in results
+        ]
+
+        count_resp = await shared_client.get(
+            "https://api.fda.gov/drug/event.json",
+            params={
+                "search": f'patient.drug.medicinalproduct:"{drug_name}"',
+                "limit": 1,
+            },
+        )
+        total_reports = 0
+        if count_resp.status_code == 200:
+            meta = count_resp.json().get("meta", {}).get("results", {})
+            total_reports = meta.get("total", 0)
+
+        return {
+            "drug": drug_name,
+            "total_reports": total_reports,
+            "top_adverse_events": adverse_events,
+            "source": "openfda",
+        }
     except Exception as e:
         logger.error("OpenFDA drug safety failed: %s", e)
         return {
@@ -1216,7 +1236,7 @@ async def get_drug_safety(drug_name: str, limit: int = 10):
         }
 
 
-@app.post("/generate_stream")
+@app.post("/generate_stream", dependencies=[Depends(verify_api_key)])
 async def generate_stream(query: Query):
     """
     SSE streaming version of /generate. Sends progress events as each step completes.
@@ -1261,13 +1281,7 @@ async def generate_stream(query: Query):
 
         activations = ttt_engine.rank(req_graph.graph, query.text)
 
-        for node in subgraph_data.get("nodes", []):
-            node_id = node.get("id", "")
-            act_score = activations.get(node_id, 0.0)
-            node["relevance"] = act_score
-            if act_score > 0.5:
-                node["glow"] = True
-                node["radius"] = min(node.get("radius", 22) * (1 + act_score * 0.3), 42)
+        _inject_activations(subgraph_data.get("nodes", []), activations)
 
         hypotheses_list = _generate_hypotheses(subgraph_data, query.text, activations)
         hypotheses = [h.model_dump() for h in hypotheses_list]
