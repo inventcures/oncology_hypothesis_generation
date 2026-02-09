@@ -339,10 +339,11 @@ def read_root():
 @app.post("/generate", response_model=GenerationResponse)
 async def generate_hypotheses(query: Query):
     """
-    Executes the ARK + TTT + MEDEA pipeline.
+    Main hypothesis generation pipeline.
 
-    Now powered by GLiNER2 for entity extraction and rich KG creation
-    with color-coded nodes, weighted edges, and relation labels.
+    Runs GLiNER2 entity extraction, knowledge graph construction with
+    OpenTargets enrichment, graph-based activation propagation, literature
+    search, and atlas projection concurrently.
     """
     # --- Request-scoped OncoGraph (avoids concurrent state corruption) ---
     req_graph = OncoGraph()
