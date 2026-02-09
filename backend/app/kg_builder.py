@@ -290,7 +290,11 @@ class KnowledgeGraphBuilder:
     # ------------------------------------------------------------------
 
     def add_pathway_enrichment(self, seed_gene: str):
-        """Add known pathway associations for seed gene."""
+        """
+        Add known pathway associations, upstream activators, and downstream
+        effectors for the seed gene. Provides directional signaling context
+        for the Pathway view.
+        """
         pathways = {
             "KRAS": ["MAPK Signaling", "PI3K-Akt Signaling"],
             "EGFR": ["ERBB Signaling", "Glioma Pathway"],
@@ -318,6 +322,153 @@ class KnowledgeGraphBuilder:
             "TP53": ["Malignant Cell", "Stem Cell"],
         }
 
+        # ---------------------------------------------------------------
+        # Upstream/Downstream signaling cascade data
+        # Format: gene -> { upstream: [(activator, relation)], downstream: [(effector, relation)] }
+        # ---------------------------------------------------------------
+        signaling = {
+            "KRAS": {
+                "upstream": [
+                    ("EGFR", "activates"),
+                    ("SOS1", "activates"),
+                    ("GRB2", "recruits"),
+                    ("NF1", "inhibits"),
+                ],
+                "downstream": [
+                    ("RAF1", "activates"),
+                    ("BRAF", "activates"),
+                    ("MEK1", "activates"),
+                    ("ERK1/2", "activates"),
+                    ("PIK3CA", "activates"),
+                    ("RALGDS", "activates"),
+                ],
+            },
+            "EGFR": {
+                "upstream": [
+                    ("EGF", "ligand"),
+                    ("TGFa", "ligand"),
+                    ("EREG", "ligand"),
+                ],
+                "downstream": [
+                    ("KRAS", "activates"),
+                    ("JAK2", "activates"),
+                    ("STAT3", "activates"),
+                    ("PIK3CA", "activates"),
+                    ("SRC", "activates"),
+                ],
+            },
+            "BRAF": {
+                "upstream": [
+                    ("KRAS", "activates"),
+                    ("NRAS", "activates"),
+                ],
+                "downstream": [
+                    ("MEK1", "activates"),
+                    ("MEK2", "activates"),
+                    ("ERK1/2", "activates"),
+                ],
+            },
+            "TP53": {
+                "upstream": [
+                    ("ATM", "activates"),
+                    ("ATR", "activates"),
+                    ("CHK2", "activates"),
+                    ("MDM2", "inhibits"),
+                ],
+                "downstream": [
+                    ("P21", "induces"),
+                    ("BAX", "induces"),
+                    ("PUMA", "induces"),
+                    ("NOXA", "induces"),
+                    ("MDM2", "induces"),
+                ],
+            },
+            "PIK3CA": {
+                "upstream": [
+                    ("EGFR", "activates"),
+                    ("HER2", "activates"),
+                    ("KRAS", "activates"),
+                    ("PTEN", "inhibits"),
+                ],
+                "downstream": [
+                    ("AKT1", "activates"),
+                    ("mTOR", "activates"),
+                    ("S6K1", "activates"),
+                ],
+            },
+            "STK11": {
+                "upstream": [
+                    ("LKB1 complex", "activates"),
+                ],
+                "downstream": [
+                    ("AMPK", "activates"),
+                    ("mTOR", "inhibits"),
+                    ("HIF1A", "inhibits"),
+                ],
+            },
+            "YAP1": {
+                "upstream": [
+                    ("LATS1", "inhibits"),
+                    ("LATS2", "inhibits"),
+                    ("MST1", "inhibits"),
+                    ("NF2", "inhibits"),
+                ],
+                "downstream": [
+                    ("TEAD1", "co-activates"),
+                    ("CTGF", "induces"),
+                    ("CYR61", "induces"),
+                    ("MYC", "induces"),
+                ],
+            },
+            "MYC": {
+                "upstream": [
+                    ("ERK1/2", "stabilizes"),
+                    ("AKT1", "stabilizes"),
+                    ("WNT/b-catenin", "induces"),
+                ],
+                "downstream": [
+                    ("CDK4", "induces"),
+                    ("Cyclin D1", "induces"),
+                    ("E2F", "activates"),
+                    ("P21", "represses"),
+                ],
+            },
+            "BRCA1": {
+                "upstream": [
+                    ("ATM", "phosphorylates"),
+                    ("ATR", "phosphorylates"),
+                    ("CHK2", "phosphorylates"),
+                ],
+                "downstream": [
+                    ("RAD51", "recruits"),
+                    ("PALB2", "recruits"),
+                    ("BRCA2", "recruits"),
+                ],
+            },
+            "ALK": {
+                "upstream": [
+                    ("EML4-ALK fusion", "constitutive"),
+                ],
+                "downstream": [
+                    ("KRAS", "activates"),
+                    ("STAT3", "activates"),
+                    ("PIK3CA", "activates"),
+                ],
+            },
+            "MET": {
+                "upstream": [
+                    ("HGF", "ligand"),
+                ],
+                "downstream": [
+                    ("KRAS", "activates"),
+                    ("PIK3CA", "activates"),
+                    ("STAT3", "activates"),
+                    ("FAK", "activates"),
+                ],
+            },
+        }
+
+        # --- Add pathway nodes/edges ---
         for p_name in pathways.get(seed_gene, []):
             if not self.graph.has_node(p_name):
                 self.graph.add_node(
@@ -340,6 +491,7 @@ class KnowledgeGraphBuilder:
                     source="curated",
                 )
 
+        # --- Add cell type nodes/edges ---
         for c_name in cell_types.get(seed_gene, []):
             if not self.graph.has_node(c_name):
                 self.graph.add_node(
@@ -361,6 +513,75 @@ class KnowledgeGraphBuilder:
                     color=EDGE_COLORS["expressed_in"],
                     source="curated",
                 )
+
+        # --- Add upstream/downstream signaling nodes/edges ---
+        sig = signaling.get(seed_gene, {})
+
+        for activator, rel_label in sig.get("upstream", []):
+            if not self.graph.has_node(activator):
+                inferred_type = self._infer_type(activator)
+                self.graph.add_node(
+                    activator,
+                    type=inferred_type,
+                    label=activator,
+                    confidence=0.8,
+                    color=NODE_COLORS.get(inferred_type, "#9ca3af"),
+                    border_color=NODE_BORDER_COLORS.get(inferred_type, "#6b7280"),
+                    source="curated",
+                    signal_role="upstream",
+                )
+            else:
+                self.graph.nodes[activator]["signal_role"] = "upstream"
+
+            if not self.graph.has_edge(activator, seed_gene):
+                is_inhibitor = (
+                    "inhibit" in rel_label.lower() or "repress" in rel_label.lower()
+                )
+                self.graph.add_edge(
+                    activator,
+                    seed_gene,
+                    weight=0.8,
+                    relation=rel_label,
+                    label=rel_label,
+                    color="#ef4444" if is_inhibitor else "#22c55e",
+                    source="curated",
+                    signal_direction="upstream",
+                )
+
+        for effector, rel_label in sig.get("downstream", []):
+            if not self.graph.has_node(effector):
+                inferred_type = self._infer_type(effector)
+                self.graph.add_node(
+                    effector,
+                    type=inferred_type,
+                    label=effector,
+                    confidence=0.8,
+                    color=NODE_COLORS.get(inferred_type, "#9ca3af"),
+                    border_color=NODE_BORDER_COLORS.get(inferred_type, "#6b7280"),
+                    source="curated",
+                    signal_role="downstream",
+                )
+            else:
+                self.graph.nodes[effector]["signal_role"] = "downstream"
+
+            if not self.graph.has_edge(seed_gene, effector):
+                is_inhibitor = (
+                    "inhibit" in rel_label.lower() or "repress" in rel_label.lower()
+                )
+                self.graph.add_edge(
+                    seed_gene,
+                    effector,
+                    weight=0.8,
+                    relation=rel_label,
+                    label=rel_label,
+                    color="#ef4444" if is_inhibitor else "#22c55e",
+                    source="curated",
+                    signal_direction="downstream",
+                )
+
+        # Mark the seed gene itself
+        if self.graph.has_node(seed_gene):
+            self.graph.nodes[seed_gene]["signal_role"] = "target"
 
     # ------------------------------------------------------------------
     # Layout + serialisation
@@ -466,22 +687,25 @@ class KnowledgeGraphBuilder:
 
             x, y = pos.get(nid, (400, 300))
 
-            nodes.append(
-                {
-                    "id": nid,
-                    "type": ntype,
-                    "label": attrs.get("label", nid),
-                    "color": attrs.get("color", "#9ca3af"),
-                    "border_color": attrs.get("border_color", "#6b7280"),
-                    "confidence": round(conf, 3),
-                    "radius": round(radius, 1),
-                    "x": x,
-                    "y": y,
-                    "degree": self.graph.degree(nid),
-                    "source": nsource,
-                    "glow": conf > 0.8,  # high confidence nodes glow
-                }
-            )
+            node_data = {
+                "id": nid,
+                "type": ntype,
+                "label": attrs.get("label", nid),
+                "color": attrs.get("color", "#9ca3af"),
+                "border_color": attrs.get("border_color", "#6b7280"),
+                "confidence": round(conf, 3),
+                "radius": round(radius, 1),
+                "x": x,
+                "y": y,
+                "degree": self.graph.degree(nid),
+                "source": nsource,
+                "glow": conf > 0.8,  # high confidence nodes glow
+            }
+            # Include signaling role if present (upstream/downstream/target)
+            signal_role = attrs.get("signal_role")
+            if signal_role:
+                node_data["signal_role"] = signal_role
+            nodes.append(node_data)
 
         # --- Edges ---
         links = []
@@ -495,19 +719,22 @@ class KnowledgeGraphBuilder:
             # thickness: 1px at 0.0 -> 5px at 1.0
             thickness = 1.0 + weight * 4.0
 
-            links.append(
-                {
-                    "source": src,
-                    "target": tgt,
-                    "relation": rel,
-                    "label": attrs.get("label", rel.replace("_", " ")),
-                    "weight": round(weight, 3),
-                    "color": attrs.get("color", "#94a3b8"),
-                    "thickness": round(thickness, 1),
-                    "source_data": attrs.get("source", "unknown"),
-                    "animated": weight > 0.8,  # high-confidence edges pulse
-                }
-            )
+            link_data = {
+                "source": src,
+                "target": tgt,
+                "relation": rel,
+                "label": attrs.get("label", rel.replace("_", " ")),
+                "weight": round(weight, 3),
+                "color": attrs.get("color", "#94a3b8"),
+                "thickness": round(thickness, 1),
+                "source_data": attrs.get("source", "unknown"),
+                "animated": weight > 0.8,  # high-confidence edges pulse
+            }
+            # Include signal direction if present
+            sig_dir = attrs.get("signal_direction")
+            if sig_dir:
+                link_data["signal_direction"] = sig_dir
+            links.append(link_data)
 
         # --- Legend ---
         legend = []

@@ -205,12 +205,11 @@ export default function MolstarViewer({
         try {
           viewerRef.current.dispose();
         } catch (e) {
-          // Ignore disposal errors
+          console.warn("Mol* disposal error:", e);
         }
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdbContent]);
+  }, [pdbContent, pockets, mutationAnalysis]);
 
   return (
     <div className="relative w-full h-full min-h-[300px] bg-slate-900 rounded-lg overflow-hidden">

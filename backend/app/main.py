@@ -92,6 +92,7 @@ class Hypothesis(BaseModel):
     confidence: float
     verified: bool
     novelty_score: float
+    evidence: Optional[List[Dict[str, Any]]] = None
 
 
 class GraphData(BaseModel):
@@ -166,13 +167,19 @@ def _infer_tissue(query_text: str) -> str:
 # --- Hypothesis Generation (dynamic, based on extracted entities & relations) ---
 
 
-def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesis]:
+def _generate_hypotheses(
+    subgraph_data: dict,
+    query_text: str,
+    activations: Optional[Dict[str, float]] = None,
+) -> List[Hypothesis]:
     """
     Generate hypotheses dynamically from the knowledge graph structure.
 
     Uses the actual extracted entities and their relationships to form
     testable biological hypotheses rather than pattern-matching on node IDs.
+    When activation scores are provided, prioritizes high-relevance nodes.
     """
+    act = activations or {}
     nodes = subgraph_data.get("nodes", [])
     links = subgraph_data.get("links", [])
     if not nodes:
@@ -187,13 +194,40 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
             )
         ]
 
-    # Classify nodes
-    genes = [n for n in nodes if n.get("type", "").lower() in ("gene", "target")]
-    diseases = [n for n in nodes if n.get("type", "").lower() == "disease"]
-    drugs = [n for n in nodes if n.get("type", "").lower() == "drug"]
-    pathways = [n for n in nodes if n.get("type", "").lower() == "pathway"]
-    mechanisms = [n for n in nodes if n.get("type", "").lower() == "mechanism"]
-    mutations = [n for n in nodes if n.get("type", "").lower() == "mutation"]
+    # Classify nodes — sort each group by activation relevance (highest first)
+    def _by_relevance(n: dict) -> float:
+        return act.get(n.get("id", ""), 0.0)
+
+    genes = sorted(
+        [n for n in nodes if n.get("type", "").lower() in ("gene", "target")],
+        key=_by_relevance,
+        reverse=True,
+    )
+    diseases = sorted(
+        [n for n in nodes if n.get("type", "").lower() == "disease"],
+        key=_by_relevance,
+        reverse=True,
+    )
+    drugs = sorted(
+        [n for n in nodes if n.get("type", "").lower() == "drug"],
+        key=_by_relevance,
+        reverse=True,
+    )
+    pathways = sorted(
+        [n for n in nodes if n.get("type", "").lower() == "pathway"],
+        key=_by_relevance,
+        reverse=True,
+    )
+    mechanisms = sorted(
+        [n for n in nodes if n.get("type", "").lower() == "mechanism"],
+        key=_by_relevance,
+        reverse=True,
+    )
+    mutations = sorted(
+        [n for n in nodes if n.get("type", "").lower() == "mutation"],
+        key=_by_relevance,
+        reverse=True,
+    )
 
     hypotheses: List[Hypothesis] = []
     h_idx = 0
@@ -221,7 +255,42 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
         if linked_diseases:
             top_disease, weight = max(linked_diseases, key=lambda x: x[1])
             h_idx += 1
-            conf = min(0.95, 0.6 + weight * 0.3)
+            gene_relevance = act.get(gene.get("id", ""), 0.5)
+            conf = min(0.95, 0.5 + weight * 0.25 + gene_relevance * 0.2)
+            # Build evidence trail: edges connecting this gene to diseases
+            evidence_items: List[Dict[str, Any]] = []
+            for link in links:
+                src, tgt = link.get("source"), link.get("target")
+                is_gene_src = src == gene.get("id")
+                is_gene_tgt = tgt == gene.get("id")
+                if is_gene_src and any(d.get("id") == tgt for d in diseases):
+                    evidence_items.append(
+                        {
+                            "type": "graph_edge",
+                            "source": gene_name,
+                            "target": next(
+                                (d.get("label") or d.get("id"))
+                                for d in diseases
+                                if d.get("id") == tgt
+                            ),
+                            "relation": link.get("relation", "associated_with"),
+                            "weight": link.get("weight", 0.5),
+                        }
+                    )
+                elif is_gene_tgt and any(d.get("id") == src for d in diseases):
+                    evidence_items.append(
+                        {
+                            "type": "graph_edge",
+                            "source": next(
+                                (d.get("label") or d.get("id"))
+                                for d in diseases
+                                if d.get("id") == src
+                            ),
+                            "target": gene_name,
+                            "relation": link.get("relation", "associated_with"),
+                            "weight": link.get("weight", 0.5),
+                        }
+                    )
             hypotheses.append(
                 Hypothesis(
                     id=f"h{h_idx}",
@@ -230,6 +299,7 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
                     confidence=round(conf, 2),
                     verified=conf > 0.8,
                     novelty_score=round(max(0.3, 1.0 - conf), 2),
+                    evidence=evidence_items[:5] if evidence_items else None,
                 )
             )
 
@@ -255,6 +325,36 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
 
         if targets:
             h_idx += 1
+            # Build evidence trail: drug-target edges
+            evidence_items = []
+            for link in links:
+                relation = (link.get("relation") or "").lower()
+                if "target" in relation or "inhibit" in relation:
+                    src, tgt = link.get("source"), link.get("target")
+                    if src == drug.get("id"):
+                        t = next((n for n in genes if n.get("id") == tgt), None)
+                        if t:
+                            evidence_items.append(
+                                {
+                                    "type": "graph_edge",
+                                    "source": drug_name,
+                                    "target": t.get("label") or t.get("id"),
+                                    "relation": link.get("relation", "targets"),
+                                    "weight": link.get("weight", 0.5),
+                                }
+                            )
+                    elif tgt == drug.get("id"):
+                        t = next((n for n in genes if n.get("id") == src), None)
+                        if t:
+                            evidence_items.append(
+                                {
+                                    "type": "graph_edge",
+                                    "source": drug_name,
+                                    "target": t.get("label") or t.get("id"),
+                                    "relation": link.get("relation", "targets"),
+                                    "weight": link.get("weight", 0.5),
+                                }
+                            )
             hypotheses.append(
                 Hypothesis(
                     id=f"h{h_idx}",
@@ -263,6 +363,7 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
                     confidence=0.75,
                     verified=True,
                     novelty_score=0.6,
+                    evidence=evidence_items[:5] if evidence_items else None,
                 )
             )
 
@@ -273,6 +374,23 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
         related_genes = [(g.get("label") or g.get("id")) for g in genes[:2]]
         context = related_mechs[:1] or related_genes[:1] or ["downstream effectors"]
         h_idx += 1
+        # Build evidence trail: edges connecting this mutation to other entities
+        evidence_items = []
+        for link in links:
+            src, tgt = link.get("source"), link.get("target")
+            if src == mut.get("id") or tgt == mut.get("id"):
+                partner_id = tgt if src == mut.get("id") else src
+                partner = next((n for n in nodes if n.get("id") == partner_id), None)
+                if partner:
+                    evidence_items.append(
+                        {
+                            "type": "graph_edge",
+                            "source": mut_name,
+                            "target": partner.get("label") or partner.get("id"),
+                            "relation": link.get("relation", "associated_with"),
+                            "weight": link.get("weight", 0.5),
+                        }
+                    )
         hypotheses.append(
             Hypothesis(
                 id=f"h{h_idx}",
@@ -281,6 +399,7 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
                 confidence=0.82,
                 verified=False,
                 novelty_score=0.78,
+                evidence=evidence_items[:5] if evidence_items else None,
             )
         )
 
@@ -300,6 +419,25 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
                     linked_genes_in_pw.append(partner.get("label") or partner.get("id"))
         if linked_genes_in_pw:
             h_idx += 1
+            # Build evidence trail: pathway-gene edges
+            evidence_items = []
+            for link in links:
+                src, tgt = link.get("source"), link.get("target")
+                if src == pw.get("id") or tgt == pw.get("id"):
+                    partner_id = tgt if src == pw.get("id") else src
+                    partner = next(
+                        (n for n in genes if n.get("id") == partner_id), None
+                    )
+                    if partner:
+                        evidence_items.append(
+                            {
+                                "type": "graph_edge",
+                                "source": pw_name,
+                                "target": partner.get("label") or partner.get("id"),
+                                "relation": link.get("relation", "involves"),
+                                "weight": link.get("weight", 0.5),
+                            }
+                        )
             hypotheses.append(
                 Hypothesis(
                     id=f"h{h_idx}",
@@ -308,6 +446,7 @@ def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesi
                     confidence=0.7,
                     verified=False,
                     novelty_score=0.85,
+                    evidence=evidence_items[:5] if evidence_items else None,
                 )
             )
 
@@ -379,14 +518,29 @@ async def generate_hypotheses(query: Query):
     papers = papers_result
     atlas_data = atlas_result
 
-    # 2. TTT Phase: Propagate activations through graph (used for node ranking)
-    ttt_engine.adapt(req_graph.graph, query.text)
+    # 2. Query-Adaptive Ranking: Propagate activations through graph
+    #    Scores reflect how relevant each node is to this specific query.
+    activations = ttt_engine.rank(req_graph.graph, query.text)
 
     # 3. Get Rich Graph Data with Layout, colors, edge labels
     subgraph_data = req_graph.get_subgraph_data()
 
+    # Inject activation scores into graph nodes for frontend rendering
+    for node in subgraph_data.get("nodes", []):
+        node_id = node.get("id", "")
+        act_score = activations.get(node_id, 0.0)
+        node["relevance"] = act_score
+        # Boost radius and glow for highly relevant nodes
+        if act_score > 0.5:
+            node["glow"] = True
+            node["radius"] = min(node.get("radius", 22) * (1 + act_score * 0.3), 42)
+
+    # Identify novel connections discovered via propagation
+    novel_connections = ttt_engine.get_novel_connections(activations, query.text)
+
     # 4. Hypothesis Generation — dynamically from extracted entities & relations
-    hypotheses = _generate_hypotheses(subgraph_data, query.text)
+    #    Pass activation scores so hypotheses prioritize high-relevance nodes
+    hypotheses = _generate_hypotheses(subgraph_data, query.text, activations)
 
     return GenerationResponse(
         hypotheses=hypotheses,
@@ -575,6 +729,24 @@ async def get_clinical_trials(
         phase=phase,
         page_size=page_size,
     )
+
+
+@app.get("/papers/{paper_id}/citations")
+async def get_paper_citations(paper_id: str, limit: int = 10):
+    """
+    Get papers that cite a given paper (by Semantic Scholar ID).
+    Exposes LiteratureAgent.get_citations for the citation network feature.
+    """
+    return await lit_agent.get_citations(paper_id, limit)
+
+
+@app.get("/papers/{paper_id}/references")
+async def get_paper_references(paper_id: str, limit: int = 10):
+    """
+    Get papers referenced by a given paper.
+    Exposes LiteratureAgent.get_references for the citation network feature.
+    """
+    return await lit_agent.get_references(paper_id, limit)
 
 
 @app.post("/smart_query")

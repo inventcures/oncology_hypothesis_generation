@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle } from "lucide-react";
+import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle, GitBranch, History, RefreshCw } from "lucide-react";
 
 // Dynamically import components to avoid SSR issues
 const MolstarViewer = dynamic(() => import("./components/MolstarViewer"), {
@@ -35,6 +35,24 @@ const ClinicalTrialsDashboard = dynamic(() => import("./components/ClinicalTrial
   ),
 });
 
+const PathwayView = dynamic(() => import("./components/PathwayView"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-violet-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  ),
+});
+
+type EvidenceItem = {
+  type: string;
+  source?: string;
+  target?: string;
+  relation?: string;
+  weight?: number;
+  title?: string;
+};
+
 type Hypothesis = {
   id: string;
   title: string;
@@ -42,6 +60,7 @@ type Hypothesis = {
   confidence: number;
   verified: boolean;
   novelty_score: number;
+  evidence?: EvidenceItem[];
 };
 
 type Paper = {
@@ -200,7 +219,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
-  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials" | "pathway">("graph");
   const [drData, setDrData] = useState<DeepResearchData | null>(null);
   const [drLoading, setDrLoading] = useState(false);
   const [validationData, setValidationData] = useState<any>(null);
@@ -211,11 +230,46 @@ export default function Home() {
   const [trialsData, setTrialsData] = useState<any>(null);
   const [trialsLoading, setTrialsLoading] = useState(false);
   const [trialsQuery, setTrialsQuery] = useState("");
+  // Error states for user-facing error messages
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [trialsError, setTrialsError] = useState<string | null>(null);
+  // Query history (localStorage-backed)
+  const [queryHistory, setQueryHistory] = useState<{text: string; time: number}[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  // --- URL State: read query from URL on mount ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const urlQuery = params.get("q");
+    const urlView = params.get("view");
+    if (urlQuery) {
+      setQuery(urlQuery);
+    }
+    if (urlView && ["graph","table","metrics","papers","validate","deep_research","trials","pathway"].includes(urlView)) {
+      setViewMode(urlView as typeof viewMode);
+    }
+    // Load history from localStorage
+    try {
+      const saved = localStorage.getItem("onco_query_history");
+      if (saved) setQueryHistory(JSON.parse(saved));
+    } catch { /* ignore */ }
+  }, []);
+
+  // --- URL State: update URL when query or viewMode changes ---
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasSearched) return;
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (viewMode !== "graph") params.set("view", viewMode);
+    const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
+    window.history.replaceState({}, "", newUrl);
+  }, [query, viewMode, hasSearched]);
 
   // --- Export helpers ---
   const exportCSV = useCallback(() => {
@@ -328,6 +382,7 @@ export default function Home() {
     if (query.toLowerCase().includes("colorectal")) cancerType = "Colorectal Cancer";
     
     setValidationLoading(true);
+    setValidationError(null);
     setViewMode("validate");
     
     try {
@@ -341,10 +396,10 @@ export default function Home() {
         setValidationData(data);
         setValidationQuery(query);
       } else {
-        console.error("Validation failed:", resp.statusText);
+        setValidationError(`Validation failed: ${resp.status} ${resp.statusText}`);
       }
     } catch (e) {
-      console.error("Validation error:", e);
+      setValidationError(`Validation error: ${e instanceof Error ? e.message : "Network error"}`);
     } finally {
       setValidationLoading(false);
     }
@@ -358,15 +413,18 @@ export default function Home() {
     const disease = diseaseNode?.id || "cancer";
     if (!gene) return;
     setTrialsLoading(true);
+    setTrialsError(null);
     try {
       const res = await fetch(`${API_URL}/clinical_trials?gene=${encodeURIComponent(gene)}&disease=${encodeURIComponent(disease)}`);
       if (res.ok) {
         const data = await res.json();
         setTrialsData(data);
         setTrialsQuery(query);
+      } else {
+        setTrialsError(`Clinical trials search failed: ${res.status} ${res.statusText}`);
       }
     } catch (err) {
-      console.error("Clinical trials fetch failed:", err);
+      setTrialsError(`Clinical trials error: ${err instanceof Error ? err.message : "Network error"}`);
     } finally {
       setTrialsLoading(false);
     }
@@ -391,11 +449,18 @@ export default function Home() {
     setValidationQuery("");
     setTrialsData(null);
     setTrialsQuery("");
+    setValidationError(null);
+    setTrialsError(null);
     setHoveredEdge(null);
     setHoveredNode(null);
     setSelectedNode(null);
     setViewMode("graph");
     setStatus("Analyzing your question...");
+
+    // Save to query history
+    const newHistory = [{text: textToSearch, time: Date.now()}, ...queryHistory.filter(h => h.text !== textToSearch)].slice(0, 20);
+    setQueryHistory(newHistory);
+    try { localStorage.setItem("onco_query_history", JSON.stringify(newHistory)); } catch { /* ignore */ }
 
     try {
       // Pipeline phase indicators (human-readable)
@@ -592,6 +657,23 @@ export default function Home() {
                 </button>
               </div>
             </form>
+            {queryHistory.length > 0 && (
+              <div className="mt-2">
+                <button onClick={() => setShowHistory(!showHistory)} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 transition-colors">
+                  <History size={12} />
+                  <span>Recent ({queryHistory.length})</span>
+                </button>
+                {showHistory && (
+                  <div className="mt-1.5 space-y-1 max-h-32 overflow-y-auto">
+                    {queryHistory.slice(0, 8).map((h, i) => (
+                      <button key={i} onClick={() => handleSubmit(undefined, h.text)} className="w-full text-left text-xs text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded truncate transition-colors">
+                        {h.text}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 bg-slate-50/50">
@@ -638,12 +720,36 @@ export default function Home() {
                     {h.description}
                   </p>
                   
-                  <div className="flex items-center gap-2">
+                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                         <div className="h-full bg-blue-500 rounded-full" style={{width: `${h.confidence * 100}%`}} />
                     </div>
                     <span className="text-xs font-medium text-slate-500">{(h.confidence * 100).toFixed(0)}% Evidence</span>
                   </div>
+
+                  {h.evidence && h.evidence.length > 0 && (
+                    <details className="mt-3">
+                      <summary className="text-xs text-slate-400 cursor-pointer hover:text-blue-500 select-none transition-colors">
+                        Evidence trail ({h.evidence.length} {h.evidence.length === 1 ? "link" : "links"})
+                      </summary>
+                      <div className="mt-2 space-y-1.5 pl-3 border-l-2 border-blue-100">
+                        {h.evidence.map((e: EvidenceItem, i: number) => (
+                          <div key={i} className="text-xs text-slate-500 flex items-center gap-1.5">
+                            {e.type === "graph_edge" ? (
+                              <>
+                                <span className="font-medium text-slate-700">{e.source}</span>
+                                <span className="text-blue-400">&rarr;</span>
+                                <span className="font-medium text-slate-700">{e.target}</span>
+                                <span className="text-slate-300 ml-1">({e.relation})</span>
+                              </>
+                            ) : (
+                              <span className="italic">{e.title || "Supporting reference"}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                 </div>
               ))}
               
@@ -693,6 +799,13 @@ export default function Home() {
                 >
                     <FileText size={16} />
                     <span>Papers</span>
+                </button>
+                <button
+                    onClick={() => setViewMode("pathway")}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "pathway" ? "bg-violet-50 text-violet-600 shadow-sm border border-violet-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <GitBranch size={16} />
+                    <span>Pathways</span>
                 </button>
                 <div className="w-px bg-slate-200 my-1 mx-1"></div>
                 <button 
@@ -1212,12 +1325,36 @@ export default function Home() {
 
                         {viewMode === "validate" && (
                             <div className="w-full h-full bg-slate-50/30">
-                                <ValidationDashboard
-                                    data={validationData}
-                                    loading={validationLoading}
-                                    onRun={handleValidation}
-                                    gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
-                                    disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
+                                {validationError ? (
+                                    <div className="flex items-center justify-center h-full">
+                                        <div className="bg-white p-8 rounded-2xl shadow-lg border border-red-200 max-w-md text-center">
+                                            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                                <XCircle className="text-red-500" size={32} />
+                                            </div>
+                                            <h3 className="text-lg font-bold text-slate-900 mb-2">Validation Failed</h3>
+                                            <p className="text-slate-500 text-sm mb-4">{validationError}</p>
+                                            <button onClick={() => { setValidationError(null); handleValidation(); }} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 flex items-center gap-2 mx-auto">
+                                                <RefreshCw size={14} /> Retry
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <ValidationDashboard
+                                        data={validationData}
+                                        loading={validationLoading}
+                                        onRun={handleValidation}
+                                        gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
+                                        disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
+                                    />
+                                )}
+                            </div>
+                        )}
+
+                        {viewMode === "pathway" && (
+                            <div className="w-full h-full overflow-auto bg-slate-50/30 p-4">
+                                <PathwayView
+                                    nodes={graphData?.nodes || []}
+                                    links={graphData?.links || []}
                                 />
                             </div>
                         )}
@@ -1845,13 +1982,28 @@ export default function Home() {
 
                         {viewMode === "trials" && (
                             <div className="w-full h-full overflow-auto bg-slate-50/30 p-6">
-                                <ClinicalTrialsDashboard
-                                    data={trialsData}
-                                    loading={trialsLoading}
-                                    onSearch={handleTrialsSearch}
-                                    gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
-                                    disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
-                                />
+                                {trialsError ? (
+                                    <div className="flex items-center justify-center h-full">
+                                        <div className="bg-white p-8 rounded-2xl shadow-lg border border-red-200 max-w-md text-center">
+                                            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                                <XCircle className="text-red-500" size={32} />
+                                            </div>
+                                            <h3 className="text-lg font-bold text-slate-900 mb-2">Trials Search Failed</h3>
+                                            <p className="text-slate-500 text-sm mb-4">{trialsError}</p>
+                                            <button onClick={() => { setTrialsError(null); handleTrialsSearch(); }} className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm hover:bg-cyan-700 flex items-center gap-2 mx-auto">
+                                                <RefreshCw size={14} /> Retry
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <ClinicalTrialsDashboard
+                                        data={trialsData}
+                                        loading={trialsLoading}
+                                        onSearch={handleTrialsSearch}
+                                        gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
+                                        disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
+                                    />
+                                )}
                             </div>
                         )}
                     </>

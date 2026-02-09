@@ -16,3 +16,8 @@ __pycache__/
 
 # Logs
 *.log
+
+# Build artifacts
+*.tsbuildinfo
+next-env.d.ts
+test-results/

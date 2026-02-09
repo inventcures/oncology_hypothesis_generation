@@ -438,7 +438,7 @@ You may call multiple tools if the query requires multiple types of information.
                 )
 
             elif tool_name == "get_protein_structure":
-                return await self.structure_agent.analyze_structure(
+                return await self.structure_agent.fetch_structure(
                     params.get("gene", ""), params.get("mutation")
                 )
 
