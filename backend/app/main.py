@@ -3,7 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import asyncio
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 from .ark import OncoGraph, OpenTargetsClient
 from .ttt import TTTAdapter
@@ -349,13 +352,29 @@ async def generate_hypotheses(query: Query):
     tissue_type = _infer_tissue(query.text)
 
     # 1. Run KG build, literature search, and atlas fetch CONCURRENTLY.
-    #    Literature & Atlas have zero dependency on the knowledge graph.
+    #    Each task is independent — a failure in one must not kill the others.
     #    Atlas is sync, so wrap in asyncio.to_thread to avoid blocking the event loop.
-    _, papers, atlas_data = await asyncio.gather(
+    kg_result, papers_result, atlas_result = await asyncio.gather(
         req_graph.build_from_query(query.text),
         lit_agent.search_papers(query.text, limit=6),
         asyncio.to_thread(atlas_agent.fetch_tumor_atlas, tissue_type, 300),
+        return_exceptions=True,
     )
+
+    # Handle partial failures gracefully
+    if isinstance(kg_result, BaseException):
+        logger.error("KG build failed: %s", kg_result)
+
+    if isinstance(papers_result, BaseException):
+        logger.error("Literature search failed: %s", papers_result)
+        papers_result = []
+
+    if isinstance(atlas_result, BaseException):
+        logger.error("Atlas fetch failed: %s", atlas_result)
+        atlas_result = {"cells": [], "error": str(atlas_result)}
+
+    papers = papers_result
+    atlas_data = atlas_result
 
     # 2. TTT Phase: Propagate activations through graph (used for node ranking)
     ttt_engine.adapt(req_graph.graph, query.text)

@@ -175,6 +175,7 @@ type DeepResearchData = {
   target: string;
   mutation: string | null;
   tissue: string;
+  query: string;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
@@ -197,6 +198,7 @@ export default function Home() {
   const [validationLoading, setValidationLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [drError, setDrError] = useState<string | null>(null);
+  const [validationQuery, setValidationQuery] = useState<string>("");
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -290,7 +292,7 @@ export default function Home() {
         const models = await modelRes.json();
         const proto = await protoRes.json();
 
-        setDrData({ struct, patent, models, proto, target: targetNode.id, mutation, tissue });
+        setDrData({ struct, patent, models, proto, target: targetNode.id, mutation, tissue, query });
     } catch (e) {
         console.error("Deep Research Failed", e);
         setDrError(String(e));
@@ -325,6 +327,7 @@ export default function Home() {
       if (resp.ok) {
         const data = await resp.json();
         setValidationData(data);
+        setValidationQuery(query);
       } else {
         console.error("Validation failed:", resp.statusText);
       }
@@ -347,6 +350,15 @@ export default function Home() {
     setHypotheses([]);
     setGraphData(null);
     setPapers([]);
+    // Reset all secondary view state from previous search
+    setDrData(null);
+    setDrError(null);
+    setValidationData(null);
+    setValidationQuery("");
+    setHoveredEdge(null);
+    setHoveredNode(null);
+    setSelectedNode(null);
+    setViewMode("graph");
     setStatus("Analyzing your question...");
 
     try {
