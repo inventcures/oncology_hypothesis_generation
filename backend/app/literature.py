@@ -7,7 +7,7 @@ SEMANTIC_SCHOLAR_API_URL = "https://api.semanticscholar.org/graph/v1/paper/searc
 SEMANTIC_SCHOLAR_PAPER_URL = "https://api.semanticscholar.org/graph/v1/paper"
 
 # API Key for higher rate limits (100 requests/sec vs 100 requests/5min)
-S2_API_KEY = os.getenv("S2_API_KEY", "5Jpny5JJeT5huCtZZRnnl1RCZULBJrcn7hvhTv3T")
+S2_API_KEY = os.getenv("S2_API_KEY", "")
 
 
 class LiteratureAgent:

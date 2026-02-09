@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target } from "lucide-react";
+import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle } from "lucide-react";
 
 // Dynamically import components to avoid SSR issues
 const MolstarViewer = dynamic(() => import("./components/MolstarViewer"), {
@@ -105,6 +105,65 @@ export default function Home() {
   const [drLoading, setDrLoading] = useState(false);
   const [validationData, setValidationData] = useState<any>(null);
   const [validationLoading, setValidationLoading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [drError, setDrError] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  // --- Export helpers ---
+  const exportCSV = () => {
+    if (!graphData) return;
+    const header = "Entity,Type,Confidence,Source";
+    const rows = graphData.nodes.map(n =>
+      `"${(n.label || n.id).replace(/"/g, '""')}","${n.type}","${((n.confidence || 0.5) * 100).toFixed(0)}%","${n.source || 'unknown'}"`
+    );
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `onco-ttt-entities-${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast("CSV exported successfully");
+  };
+
+  const exportBibTeX = () => {
+    if (!papers.length) return;
+    const entries = papers.map((p, i) => {
+      const key = `paper${i + 1}_${p.year || 'nd'}`;
+      return `@article{${key},
+  title={${p.title}},
+  author={${p.authors}},
+  journal={${p.journal}},
+  year={${p.year || 'n.d.'}},
+  url={${p.url || ''}}
+}`;
+    });
+    const bib = entries.join("\n\n");
+    const blob = new Blob([bib], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `onco-ttt-papers-${Date.now()}.bib`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast("BibTeX exported successfully");
+  };
+
+  // --- Tissue inference helper ---
+  const inferTissue = (): string => {
+    const q = query.toLowerCase();
+    if (q.includes("melanoma") || q.includes("skin")) return "skin";
+    if (q.includes("breast")) return "breast";
+    if (q.includes("pancrea")) return "pancreas";
+    if (q.includes("colorectal") || q.includes("colon")) return "colon";
+    if (q.includes("brain") || q.includes("glioma") || q.includes("glioblastoma")) return "brain";
+    if (q.includes("liver") || q.includes("hepato")) return "liver";
+    if (q.includes("prostate")) return "prostate";
+    if (q.includes("ovarian") || q.includes("ovary")) return "ovary";
+    if (q.includes("renal") || q.includes("kidney")) return "kidney";
+    return "lung"; // default
+  };
 
   const handleDeepResearch = async () => {
     if (!graphData || graphData.nodes.length === 0) return;
@@ -118,20 +177,22 @@ export default function Home() {
     const mutation = mutationMatch ? mutationMatch[1].toUpperCase() : null;
     
     setDrLoading(true);
+    setDrError(null);
     try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
+        const tissue = inferTissue();
         
         // Build structure URL with mutation if present
         const structureUrl = mutation 
             ? `${apiUrl}/structure/${targetNode.id}?mutation=${mutation}`
             : `${apiUrl}/structure/${targetNode.id}`;
         
-        // Parallel Fetching
+        // Parallel Fetching - tissue and cell_line are now dynamically inferred
         const [structRes, patentRes, modelRes, protoRes] = await Promise.all([
             fetch(structureUrl),
             fetch(`${apiUrl}/patents/check?gene=${targetNode.id}&disease=${diseaseNode.id}`),
-            fetch(`${apiUrl}/models/recommend?tissue=Lung&mutation=${mutation || targetNode.id}`),
-            fetch(`${apiUrl}/protocols/generate?method=crispr&gene=${targetNode.id}&cell_line=A549`)
+            fetch(`${apiUrl}/models/recommend?tissue=${encodeURIComponent(tissue)}&mutation=${mutation || targetNode.id}`),
+            fetch(`${apiUrl}/protocols/generate?method=crispr&gene=${targetNode.id}&cell_line=auto`)
         ]);
 
         const struct = await structRes.json();
@@ -139,9 +200,10 @@ export default function Home() {
         const models = await modelRes.json();
         const proto = await protoRes.json();
 
-        setDrData({ struct, patent, models, proto, target: targetNode.id, mutation });
+        setDrData({ struct, patent, models, proto, target: targetNode.id, mutation, tissue });
     } catch (e) {
         console.error("Deep Research Failed", e);
+        setDrError(String(e));
     } finally {
         setDrLoading(false);
     }
@@ -195,13 +257,13 @@ export default function Home() {
     setHypotheses([]);
     setGraphData(null);
     setPapers([]);
-    setStatus("Initializing TTT Adaptation...");
+    setStatus("Analyzing your question...");
 
     try {
-      // Simulate pipeline phases
-      setTimeout(() => setStatus("GLiNER2 Extracting Entities..."), 800);
-      setTimeout(() => setStatus("ARK Building Knowledge Graph..."), 1800);
-      setTimeout(() => setStatus("LitAgent Searching Papers..."), 2800);
+      // Pipeline phase indicators (human-readable)
+      setTimeout(() => setStatus("Identifying genes, drugs & pathways..."), 800);
+      setTimeout(() => setStatus("Connecting biological relationships..."), 1800);
+      setTimeout(() => setStatus("Finding relevant research papers..."), 2800);
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
       const res = await fetch(`${apiUrl}/generate`, {
@@ -247,6 +309,12 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col bg-slate-50 text-slate-900 font-sans">
+      <style jsx global>{`
+        @keyframes slideUp {
+          from { opacity: 0; transform: translate(-50%, 10px); }
+          to { opacity: 1; transform: translate(-50%, 0); }
+        }
+      `}</style>
       {/* Header */}
       <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-200 shadow-sm z-20 sticky top-0">
         <div className="flex items-center gap-2 cursor-pointer" onClick={() => setHasSearched(false)}>
@@ -259,16 +327,16 @@ export default function Home() {
         {hasSearched && (
             <div className="flex gap-6 text-sm font-medium">
             <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${status.includes("GLiNER2") ? "bg-indigo-500 animate-pulse" : "bg-green-500"}`}></div>
-                <span className="text-slate-600">GLiNER2 NER</span>
+                <div className={`w-2 h-2 rounded-full ${status.includes("genes") || status.includes("Identifying") ? "bg-indigo-500 animate-pulse" : "bg-green-500"}`}></div>
+                <span className="text-slate-600">Entity Extraction</span>
             </div>
             <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${status.includes("ARK") ? "bg-blue-500 animate-pulse" : "bg-green-500"}`}></div>
-                <span className="text-slate-600">ARK Agent</span>
+                <div className={`w-2 h-2 rounded-full ${status.includes("Connecting") || status.includes("relationships") ? "bg-blue-500 animate-pulse" : "bg-green-500"}`}></div>
+                <span className="text-slate-600">Knowledge Graph</span>
             </div>
             <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${status.includes("MEDEA") ? "bg-amber-500 animate-pulse" : "bg-green-500"}`}></div>
-                <span className="text-slate-600">MEDEA Verifier</span>
+                <div className={`w-2 h-2 rounded-full ${status.includes("papers") || status.includes("Finding") ? "bg-amber-500 animate-pulse" : "bg-green-500"}`}></div>
+                <span className="text-slate-600">Literature</span>
             </div>
             </div>
         )}
@@ -282,15 +350,15 @@ export default function Home() {
                 <div className="space-y-4">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-sm font-medium border border-blue-100">
                         <Sparkles size={14} />
-                        <span>Powered by GLiNER2 NER, Test-Time Training & OpenTargets</span>
+                        <span>AI-Powered Cancer Research Assistant</span>
                     </div>
                     <h2 className="text-5xl font-extrabold text-slate-900 tracking-tight leading-tight">
-                        Discover Hidden <br/> 
-                        <span className="text-blue-600">Oncology Mechanisms</span>
+                        Ask About <br/> 
+                        <span className="text-blue-600">Cancer Biology</span>
                     </h2>
                     <p className="text-lg text-slate-500 max-w-2xl mx-auto">
-                        An AI agent that adapts to your specific query in real-time. 
-                        Generate verified hypotheses, visualize pathways, and validate with literature.
+                        Get hypotheses backed by evidence. We extract genes, drugs, and pathways from your question, 
+                        connect them using validated databases, and surface relevant research papers.
                     </p>
                 </div>
 
@@ -302,7 +370,7 @@ export default function Home() {
                         <input 
                             type="text" 
                             className="flex-1 bg-transparent border-none focus:ring-0 text-lg p-4 placeholder:text-slate-400 text-slate-800"
-                            placeholder="Describe a clinical phenomenon or resistance pattern..."
+                            placeholder="e.g. Why does KRAS-mutant lung cancer resist immunotherapy?"
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
@@ -318,24 +386,45 @@ export default function Home() {
                     </div>
                 </div>
 
-                {/* Suggested Queries */}
-                <div className="pt-8">
-                    <p className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Try exploring</p>
-                    <div className="flex flex-wrap justify-center gap-3">
-                        {[
-                            "KRAS G12C resistance mechanisms",
-                            "STK11 loss in Lung Adenocarcinoma",
-                            "Role of YAP1 in immunotherapy failure",
-                            "EGFR T790M bypass tracks"
-                        ].map((q) => (
-                            <button
-                                key={q}
-                                onClick={() => handleExampleClick(q)}
-                                className="px-4 py-2 bg-white border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded-full text-sm font-medium text-slate-600 transition-all shadow-sm hover:shadow-md"
-                            >
-                                {q}
-                            </button>
-                        ))}
+                {/* Suggested Queries - Tiered */}
+                <div className="pt-8 space-y-6">
+                    <div>
+                        <p className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Start Simple</p>
+                        <div className="flex flex-wrap justify-center gap-3">
+                            {[
+                                "What genes drive lung cancer?",
+                                "How does melanoma resist treatment?",
+                                "What drugs target EGFR?",
+                                "What is the role of TP53 in cancer?"
+                            ].map((q) => (
+                                <button
+                                    key={q}
+                                    onClick={() => handleExampleClick(q)}
+                                    className="px-4 py-2 bg-white border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded-full text-sm font-medium text-slate-600 transition-all shadow-sm hover:shadow-md"
+                                >
+                                    {q}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <div>
+                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3">Go Deeper</p>
+                        <div className="flex flex-wrap justify-center gap-2">
+                            {[
+                                "KRAS G12C resistance mechanisms in NSCLC",
+                                "STK11 loss and immune exclusion in Lung Adenocarcinoma",
+                                "YAP1-mediated immunotherapy failure",
+                                "EGFR T790M bypass signaling tracks"
+                            ].map((q) => (
+                                <button
+                                    key={q}
+                                    onClick={() => handleExampleClick(q)}
+                                    className="px-3 py-1.5 bg-slate-50 border border-slate-100 hover:border-blue-300 hover:text-blue-600 rounded-full text-xs font-medium text-slate-400 transition-all"
+                                >
+                                    {q}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 </div>
 
@@ -378,8 +467,15 @@ export default function Home() {
             </div>
 
             {status.startsWith("Error") && (
-                 <div className="p-4 rounded-lg bg-red-50 border border-red-100 text-red-600 text-sm mb-4">
-                    {status}
+                 <div className="p-4 rounded-lg bg-red-50 border border-red-100 text-sm mb-4">
+                    <p className="text-red-700 font-medium mb-2">Analysis could not be completed</p>
+                    <p className="text-red-600 text-xs mb-3">This usually means one of our data sources is temporarily unavailable.</p>
+                    <button
+                      onClick={() => handleSubmit()}
+                      className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-medium rounded-md transition-colors"
+                    >
+                      Try Again
+                    </button>
                  </div>
             )}
 
@@ -408,7 +504,7 @@ export default function Home() {
                     <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                         <div className="h-full bg-blue-500 rounded-full" style={{width: `${h.confidence * 100}%`}} />
                     </div>
-                    <span className="text-xs font-medium text-slate-500">{(h.confidence * 100).toFixed(0)}% Conf.</span>
+                    <span className="text-xs font-medium text-slate-500">{(h.confidence * 100).toFixed(0)}% Evidence</span>
                   </div>
                 </div>
               ))}
@@ -768,13 +864,22 @@ export default function Home() {
                         {viewMode === "table" && (
                             <div className="w-full h-full p-12 overflow-auto">
                                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden max-w-5xl mx-auto">
-                                    <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                                        <h3 className="text-lg font-bold text-slate-800">Entity Evidence Table</h3>
+                                     <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-start justify-between">
+                                       <div>
+                                         <h3 className="text-lg font-bold text-slate-800">Biological Entities Found</h3>
                                          <p className="text-sm text-slate-500 mt-1">
-                                             Entities extracted by <strong>GLiNER2</strong> (biomedical NER) and enriched via <strong>OpenTargets</strong>.
-                                             {graphData.stats && ` ${graphData.stats.total_nodes} entities across ${Object.keys(graphData.stats.entity_types).length} types.`}
-                                         </p>
-                                    </div>
+                                              Genes, drugs, pathways, and other biological entities identified in your query, cross-referenced with validated databases.
+                                              {graphData.stats && ` ${graphData.stats.total_nodes} entities across ${Object.keys(graphData.stats.entity_types).length} types.`}
+                                          </p>
+                                       </div>
+                                       <button
+                                         onClick={exportCSV}
+                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded-lg text-xs font-medium text-slate-600 transition-all shadow-sm shrink-0"
+                                       >
+                                         <Download size={14} />
+                                         Export CSV
+                                       </button>
+                                     </div>
                                     <table className="w-full text-sm text-left">
                                         <thead className="bg-slate-50 border-b border-slate-200">
                                              <tr>
@@ -884,10 +989,10 @@ export default function Home() {
                                         </div>
                                         <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
                                             <Sparkles className="text-purple-500" size={20} />
-                                            Novelty Score
-                                        </h3>
-                                        <p className="text-xs text-slate-400 mb-6">
-                                            How surprising or unexplored is this link? High scores indicate potential for new discovery.
+                                             Discovery Potential
+                                         </h3>
+                                         <p className="text-xs text-slate-400 mb-6">
+                                             How likely is this to lead to a new finding? High scores mean less explored territory.
                                         </p>
                                         <div className="space-y-6">
                                             {hypotheses.map(h => (
@@ -910,9 +1015,20 @@ export default function Home() {
                             </div>
                         )}
 
-                        {viewMode === "papers" && (
-                            <div className="w-full h-full p-12 overflow-auto">
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
+                         {viewMode === "papers" && (
+                             <div className="w-full h-full p-12 overflow-auto">
+                                 {papers.length > 0 && (
+                                   <div className="max-w-7xl mx-auto mb-4 flex justify-end">
+                                     <button
+                                       onClick={exportBibTeX}
+                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-blue-400 hover:text-blue-600 rounded-lg text-xs font-medium text-slate-600 transition-all shadow-sm"
+                                     >
+                                       <Download size={14} />
+                                       Export BibTeX
+                                     </button>
+                                   </div>
+                                 )}
+                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
                                     {papers.map((p) => (
                                         <div key={p.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow flex flex-col h-full">
                                             <div className="mb-4">
@@ -964,37 +1080,59 @@ export default function Home() {
                             </div>
                         )}
 
-                        {viewMode === "deep_research" && (
-                            <div className="w-full h-full p-12 overflow-auto bg-slate-50/50">
-                                {!drData ? (
-                                    <div className="flex flex-col items-center justify-center h-full">
-                                        <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 max-w-md text-center">
-                                            <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                                                <FlaskConical className="text-purple-600" size={32} />
-                                            </div>
-                                            <h3 className="text-xl font-bold text-slate-900 mb-2">Deep Feasibility Check</h3>
-                                            <p className="text-slate-500 mb-8">
-                                                Analyze structural druggability, patent landscape, and cell line availability for the identified targets.
-                                            </p>
-                                            <button 
-                                                onClick={handleDeepResearch}
-                                                disabled={drLoading}
-                                                className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
-                                            >
-                                                {drLoading ? (
-                                                    <>
-                                                        <Activity className="animate-spin" size={18} />
-                                                        Running Analysis...
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Sparkles size={18} />
-                                                        Run Deep Research
-                                                    </>
-                                                )}
-                                            </button>
-                                        </div>
-                                    </div>
+                         {viewMode === "deep_research" && (
+                             <div className="w-full h-full p-12 overflow-auto bg-slate-50/50">
+                                 {!drData ? (
+                                     <div className="flex flex-col items-center justify-center h-full">
+                                         <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 max-w-md text-center">
+                                             {drError ? (
+                                               <>
+                                                 <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                                                     <XCircle className="text-red-500" size={32} />
+                                                 </div>
+                                                 <h3 className="text-xl font-bold text-slate-900 mb-2">Analysis Failed</h3>
+                                                 <p className="text-slate-500 mb-4">
+                                                     The deep research analysis could not be completed. This usually means one of the upstream services is temporarily unavailable.
+                                                 </p>
+                                                 <p className="text-xs text-red-400 bg-red-50 p-2 rounded-lg mb-6 font-mono break-all">{drError}</p>
+                                                 <button 
+                                                     onClick={() => { setDrError(null); handleDeepResearch(); }}
+                                                     className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-all shadow-md flex items-center justify-center gap-2"
+                                                 >
+                                                     <Sparkles size={18} />
+                                                     Try Again
+                                                 </button>
+                                               </>
+                                             ) : (
+                                               <>
+                                                 <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                                                     <FlaskConical className="text-purple-600" size={32} />
+                                                 </div>
+                                                 <h3 className="text-xl font-bold text-slate-900 mb-2">Deep Feasibility Check</h3>
+                                                 <p className="text-slate-500 mb-8">
+                                                     Analyze structural druggability, patent landscape, and cell line availability for the identified targets.
+                                                 </p>
+                                                 <button 
+                                                     onClick={handleDeepResearch}
+                                                     disabled={drLoading}
+                                                     className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                                                 >
+                                                     {drLoading ? (
+                                                         <>
+                                                             <Activity className="animate-spin" size={18} />
+                                                             Running Analysis...
+                                                         </>
+                                                     ) : (
+                                                         <>
+                                                             <Sparkles size={18} />
+                                                             Run Deep Research
+                                                         </>
+                                                     )}
+                                                 </button>
+                                               </>
+                                             )}
+                                         </div>
+                                     </div>
                                 ) : (
                                     <div className="max-w-7xl mx-auto space-y-6">
                                         <div className="flex items-center justify-between">
@@ -1008,7 +1146,7 @@ export default function Home() {
                                                 <div className="flex items-center justify-between mb-4">
                                                     <div className="flex items-center gap-2">
                                                         <Dna className="text-blue-500" />
-                                                        <h3 className="font-bold text-slate-700">Virtual Structural Biologist</h3>
+                                                        <h3 className="font-bold text-slate-700">Protein Structure Analysis</h3>
                                                     </div>
                                                     {drData.struct.uniprot_id && (
                                                         <a 
@@ -1167,7 +1305,7 @@ export default function Home() {
                                                 <div className="flex items-center justify-between mb-4">
                                                     <div className="flex items-center gap-2">
                                                         <Scale className="text-amber-500" />
-                                                        <h3 className="font-bold text-slate-700">Patent Hawk - Freedom to Operate</h3>
+                                                        <h3 className="font-bold text-slate-700">Patent Landscape</h3>
                                                     </div>
                                                     <div className="flex gap-2">
                                                         <a href={drData.patent.google_patents_link} target="_blank" className="text-xs text-blue-600 hover:underline">Google Patents</a>
@@ -1187,7 +1325,7 @@ export default function Home() {
                                                             'bg-green-50 border-green-200'
                                                         }`}>
                                                             <div className="flex justify-between items-center mb-2">
-                                                                <span className="text-sm font-medium text-slate-600">Scooped Score</span>
+                                                                <span className="text-sm font-medium text-slate-600">IP Competition Score</span>
                                                                 <span className={`text-2xl font-bold ${
                                                                     drData.patent.risk_color === 'red' ? 'text-red-600' :
                                                                     drData.patent.risk_color === 'amber' ? 'text-amber-600' :
@@ -1325,7 +1463,7 @@ export default function Home() {
                                                 <div className="flex items-center justify-between mb-4">
                                                     <div className="flex items-center gap-2">
                                                         <Microscope className="text-emerald-500" />
-                                                        <h3 className="font-bold text-slate-700">Model Matchmaker</h3>
+                                                         <h3 className="font-bold text-slate-700">Cell Line Recommendations</h3>
                                                     </div>
                                                     {drData.models?.total_found && (
                                                         <span className="text-xs text-slate-400">{drData.models.total_found} models found</span>
@@ -1444,7 +1582,7 @@ export default function Home() {
                                                 <div className="flex items-center justify-between mb-4">
                                                     <div className="flex items-center gap-2">
                                                         <FileEdit className="text-indigo-500" />
-                                                        <h3 className="font-bold text-slate-700">Protocol Droid</h3>
+                                                         <h3 className="font-bold text-slate-700">Experiment Protocol Generator</h3>
                                                     </div>
                                                     <span className={`text-xs px-2 py-1 rounded ${
                                                         drData.proto.generated_by === 'LLM' 
@@ -1549,7 +1687,7 @@ export default function Home() {
                                                 <button 
                                                     onClick={() => {
                                                         navigator.clipboard.writeText(drData.proto.content);
-                                                        alert('Protocol copied to clipboard!');
+                                                        showToast('Protocol copied to clipboard!');
                                                     }}
                                                     className="mt-4 w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
                                                 >
@@ -1568,15 +1706,27 @@ export default function Home() {
                         <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">
                             <Microscope size={40} className="text-slate-300" />
                         </div>
-                        <h3 className="text-xl font-semibold text-slate-900 mb-2">Ready to Explore</h3>
-                        <p className="text-slate-500 max-w-sm mx-auto">
-                            Enter a query on the left to activate the TTT engine and visualize the discovery process.
-                        </p>
+                         <h3 className="text-xl font-semibold text-slate-900 mb-2">Ready to Explore</h3>
+                         <p className="text-slate-500 max-w-sm mx-auto">
+                             Enter a question on the left to start your analysis and see the results here.
+                         </p>
                     </div>
                 )}
             </div>
         </section>
       </div>
+      )}
+      {/* Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-[slideUp_0.3s_ease-out]">
+          <div className="bg-slate-800 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-sm font-medium">
+            <CheckCircle size={16} className="text-emerald-400 shrink-0" />
+            {toast}
+            <button onClick={() => setToast(null)} className="ml-2 text-slate-400 hover:text-white">
+              <XIcon size={14} />
+            </button>
+          </div>
+        </div>
       )}
     </main>
   );

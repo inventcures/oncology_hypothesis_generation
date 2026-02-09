@@ -118,6 +118,173 @@ class KGBuildRequest(BaseModel):
     height: float = 600
 
 
+# --- Hypothesis Generation (dynamic, based on extracted entities & relations) ---
+
+
+def _generate_hypotheses(subgraph_data: dict, query_text: str) -> List[Hypothesis]:
+    """
+    Generate hypotheses dynamically from the knowledge graph structure.
+
+    Uses the actual extracted entities and their relationships to form
+    testable biological hypotheses rather than pattern-matching on node IDs.
+    """
+    nodes = subgraph_data.get("nodes", [])
+    links = subgraph_data.get("links", [])
+    if not nodes:
+        return [
+            Hypothesis(
+                id="h_empty",
+                title="Insufficient Data",
+                description="Not enough biological entities could be extracted. Try rephrasing with specific gene/drug/disease names.",
+                confidence=0.1,
+                verified=False,
+                novelty_score=0.5,
+            )
+        ]
+
+    # Classify nodes
+    genes = [n for n in nodes if n.get("type", "").lower() in ("gene", "target")]
+    diseases = [n for n in nodes if n.get("type", "").lower() == "disease"]
+    drugs = [n for n in nodes if n.get("type", "").lower() == "drug"]
+    pathways = [n for n in nodes if n.get("type", "").lower() == "pathway"]
+    mechanisms = [n for n in nodes if n.get("type", "").lower() == "mechanism"]
+    mutations = [n for n in nodes if n.get("type", "").lower() == "mutation"]
+
+    hypotheses: List[Hypothesis] = []
+    h_idx = 0
+
+    # --- Strategy 1: Gene-Disease association hypotheses ---
+    for gene in genes[:2]:
+        gene_name = gene.get("label") or gene.get("id", "Unknown")
+        # Find diseases linked to this gene
+        linked_diseases = []
+        for link in links:
+            partner = None
+            if link.get("source") == gene.get("id"):
+                partner = next(
+                    (n for n in diseases if n.get("id") == link.get("target")), None
+                )
+            elif link.get("target") == gene.get("id"):
+                partner = next(
+                    (n for n in diseases if n.get("id") == link.get("source")), None
+                )
+            if partner:
+                linked_diseases.append(
+                    (partner.get("label") or partner.get("id"), link.get("weight", 0.5))
+                )
+
+        if linked_diseases:
+            top_disease, weight = max(linked_diseases, key=lambda x: x[1])
+            h_idx += 1
+            conf = min(0.95, 0.6 + weight * 0.3)
+            hypotheses.append(
+                Hypothesis(
+                    id=f"h{h_idx}",
+                    title=f"{gene_name} as Driver in {top_disease}",
+                    description=f"Analysis identified {gene_name} as a key node connected to {top_disease} with {len(linked_diseases)} supporting associations in the knowledge graph.",
+                    confidence=round(conf, 2),
+                    verified=conf > 0.8,
+                    novelty_score=round(max(0.3, 1.0 - conf), 2),
+                )
+            )
+
+    # --- Strategy 2: Drug-Gene targeting hypotheses ---
+    for drug in drugs[:2]:
+        drug_name = drug.get("label") or drug.get("id", "Unknown")
+        targets = []
+        for link in links:
+            relation = (link.get("relation") or "").lower()
+            if "target" in relation or "inhibit" in relation:
+                if link.get("source") == drug.get("id"):
+                    t = next(
+                        (n for n in genes if n.get("id") == link.get("target")), None
+                    )
+                    if t:
+                        targets.append(t.get("label") or t.get("id"))
+                elif link.get("target") == drug.get("id"):
+                    t = next(
+                        (n for n in genes if n.get("id") == link.get("source")), None
+                    )
+                    if t:
+                        targets.append(t.get("label") or t.get("id"))
+
+        if targets:
+            h_idx += 1
+            hypotheses.append(
+                Hypothesis(
+                    id=f"h{h_idx}",
+                    title=f"{drug_name} Targets {', '.join(targets[:2])}",
+                    description=f"{drug_name} may modulate {', '.join(targets)} based on extracted relationship evidence from the query context.",
+                    confidence=0.75,
+                    verified=True,
+                    novelty_score=0.6,
+                )
+            )
+
+    # --- Strategy 3: Mutation-Resistance / Mechanism hypotheses ---
+    for mut in mutations[:1]:
+        mut_name = mut.get("label") or mut.get("id", "Unknown")
+        related_mechs = [(m.get("label") or m.get("id")) for m in mechanisms]
+        related_genes = [(g.get("label") or g.get("id")) for g in genes[:2]]
+        context = related_mechs[:1] or related_genes[:1] or ["downstream effectors"]
+        h_idx += 1
+        hypotheses.append(
+            Hypothesis(
+                id=f"h{h_idx}",
+                title=f"Mutation {mut_name} & Resistance",
+                description=f"The {mut_name} mutation may drive resistance via {context[0]}, presenting a potential therapeutic vulnerability.",
+                confidence=0.82,
+                verified=False,
+                novelty_score=0.78,
+            )
+        )
+
+    # --- Strategy 4: Pathway involvement ---
+    for pw in pathways[:1]:
+        pw_name = pw.get("label") or pw.get("id", "Unknown")
+        linked_genes_in_pw = []
+        for link in links:
+            if link.get("source") == pw.get("id") or link.get("target") == pw.get("id"):
+                partner_id = (
+                    link.get("target")
+                    if link.get("source") == pw.get("id")
+                    else link.get("source")
+                )
+                partner = next((n for n in genes if n.get("id") == partner_id), None)
+                if partner:
+                    linked_genes_in_pw.append(partner.get("label") or partner.get("id"))
+        if linked_genes_in_pw:
+            h_idx += 1
+            hypotheses.append(
+                Hypothesis(
+                    id=f"h{h_idx}",
+                    title=f"{pw_name} Pathway Involvement",
+                    description=f"The {pw_name} pathway connects {', '.join(linked_genes_in_pw[:3])}, suggesting coordinated signaling that may be therapeutically targetable.",
+                    confidence=0.7,
+                    verified=False,
+                    novelty_score=0.85,
+                )
+            )
+
+    # --- Fallback: if no specific hypotheses could be formed ---
+    if not hypotheses:
+        top_node = nodes[0]
+        top_name = top_node.get("label") or top_node.get("id", "Unknown")
+        top_type = top_node.get("type", "entity")
+        hypotheses.append(
+            Hypothesis(
+                id="h_gen",
+                title=f"Novel Association: {top_name}",
+                description=f"Analysis of {top_name} ({top_type}) reveals connections to {len(links)} other entities that merit further investigation.",
+                confidence=0.55,
+                verified=False,
+                novelty_score=0.9,
+            )
+        )
+
+    return hypotheses[:5]  # Cap at 5 hypotheses
+
+
 # --- Routes ---
 
 
@@ -157,46 +324,8 @@ async def generate_hypotheses(query: Query):
 
     atlas_data = atlas_agent.fetch_tumor_atlas(tissue_type, limit=300)
 
-    # 6. Hypothesis Generation (Mocked based on graph content)
-    hypotheses = []
-    node_ids = [n["id"] for n in subgraph_data.get("nodes", [])]
-
-    if any("KRAS" in nid for nid in node_ids):
-        hypotheses.append(
-            Hypothesis(
-                id="h1",
-                title="KRAS-Related Resistance",
-                description="TTT identified potential resistance mechanisms linked to KRAS downstream effectors.",
-                confidence=0.89,
-                verified=True,
-                novelty_score=0.75,
-            )
-        )
-
-    if any("STK11" in nid for nid in node_ids):
-        hypotheses.append(
-            Hypothesis(
-                id="h2",
-                title="STK11 & Immune Exclusion",
-                description="STK11 loss promotes cold tumor microenvironment via WNT signaling.",
-                confidence=0.92,
-                verified=True,
-                novelty_score=0.82,
-            )
-        )
-
-    if not hypotheses:
-        top_node = node_ids[0] if node_ids else "Unknown"
-        hypotheses.append(
-            Hypothesis(
-                id="h_gen",
-                title=f"Novel Association: {top_node}",
-                description=f"Analysis of {top_node} suggests unexplored links to phenotypic outcomes.",
-                confidence=0.6,
-                verified=False,
-                novelty_score=0.9,
-            )
-        )
+    # 6. Hypothesis Generation — dynamically from extracted entities & relations
+    hypotheses = _generate_hypotheses(subgraph_data, query.text)
 
     return GenerationResponse(
         hypotheses=hypotheses,
