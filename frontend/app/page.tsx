@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle, GitBranch, History, RefreshCw } from "lucide-react";
+import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle, GitBranch, History, RefreshCw, Zap, TrendingUp, FileDown } from "lucide-react";
 
 // Dynamically import components to avoid SSR issues
 const MolstarViewer = dynamic(() => import("./components/MolstarViewer"), {
@@ -40,6 +40,53 @@ const PathwayView = dynamic(() => import("./components/PathwayView"), {
   loading: () => (
     <div className="w-full h-full flex items-center justify-center">
       <div className="w-12 h-12 border-4 border-violet-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  ),
+});
+
+const TargetDossier = dynamic(() => import("./components/TargetDossier"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  ),
+});
+
+const IndicationHeatmap = dynamic(() => import("./components/IndicationHeatmap"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-violet-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  ),
+});
+
+const WhatIfSimulator = dynamic(() => import("./components/WhatIfSimulator"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  ),
+});
+
+const ExportReport = dynamic(() => import("./components/ExportReport"), { ssr: false });
+
+const InteractiveGraph = dynamic(() => import("./components/InteractiveGraph"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  ),
+});
+
+const CompetitiveDashboard = dynamic(() => import("./components/CompetitiveDashboard"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
     </div>
   ),
 });
@@ -219,7 +266,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
-  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials" | "pathway">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials" | "pathway" | "dossier" | "indications" | "whatif" | "competitive">("graph");
   const [drData, setDrData] = useState<DeepResearchData | null>(null);
   const [drLoading, setDrLoading] = useState(false);
   const [validationData, setValidationData] = useState<any>(null);
@@ -236,6 +283,17 @@ export default function Home() {
   // Query history (localStorage-backed)
   const [queryHistory, setQueryHistory] = useState<{text: string; time: number}[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  // Interactive graph toggle
+  const [useInteractiveGraph, setUseInteractiveGraph] = useState(true);
+  // Dossier state
+  const [dossierData, setDossierData] = useState<any>(null);
+  const [dossierLoading, setDossierLoading] = useState(false);
+  // Indication expansion state
+  const [indicationData, setIndicationData] = useState<any>(null);
+  const [indicationLoading, setIndicationLoading] = useState(false);
+  // What-If simulator state
+  const [whatIfResult, setWhatIfResult] = useState<any>(null);
+  const [whatIfLoading, setWhatIfLoading] = useState(false);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -251,7 +309,7 @@ export default function Home() {
     if (urlQuery) {
       setQuery(urlQuery);
     }
-    if (urlView && ["graph","table","metrics","papers","validate","deep_research","trials","pathway"].includes(urlView)) {
+    if (urlView && ["graph","table","metrics","papers","validate","deep_research","trials","pathway","dossier","indications","whatif","competitive"].includes(urlView)) {
       setViewMode(urlView as typeof viewMode);
     }
     // Load history from localStorage
@@ -430,6 +488,69 @@ export default function Home() {
     }
   }, [graphData, query]);
 
+  const handleDossier = useCallback(async () => {
+    if (!graphData?.nodes) return;
+    const geneNode = graphData.nodes.find(n => n.type.toLowerCase() === "gene") || graphData.nodes[0];
+    const diseaseNode = graphData.nodes.find(n => n.type.toLowerCase() === "disease") || { id: "Cancer" };
+    const mutationMatch = query.match(/([A-Z]\d+[A-Z])/i);
+    const mutation = mutationMatch ? mutationMatch[1].toUpperCase() : null;
+    const tissue = inferTissue();
+    
+    setDossierLoading(true);
+    setViewMode("dossier");
+    try {
+      const res = await fetch(`${API_URL}/dossier`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gene: geneNode.id, disease: (diseaseNode as any).id || "Cancer", mutation, tissue }),
+      });
+      if (res.ok) {
+        setDossierData(await res.json());
+      }
+    } catch (e) {
+      console.error("Dossier failed:", e);
+    } finally {
+      setDossierLoading(false);
+    }
+  }, [graphData, query, inferTissue]);
+
+  const handleIndications = useCallback(async () => {
+    if (!graphData?.nodes) return;
+    const geneNode = graphData.nodes.find(n => n.type.toLowerCase() === "gene");
+    if (!geneNode) return;
+    
+    setIndicationLoading(true);
+    setViewMode("indications");
+    try {
+      const res = await fetch(`${API_URL}/indications?gene=${encodeURIComponent(geneNode.id)}&limit=25`);
+      if (res.ok) {
+        setIndicationData(await res.json());
+      }
+    } catch (e) {
+      console.error("Indications failed:", e);
+    } finally {
+      setIndicationLoading(false);
+    }
+  }, [graphData]);
+
+  const handleWhatIf = useCallback(async (targetNode: string, perturbationType: string) => {
+    setWhatIfLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_node: targetNode, perturbation_type: perturbationType, query }),
+      });
+      if (res.ok) {
+        setWhatIfResult(await res.json());
+      }
+    } catch (e) {
+      console.error("Simulation failed:", e);
+    } finally {
+      setWhatIfLoading(false);
+    }
+  }, [query]);
+
   const handleSubmit = useCallback(async (e?: React.FormEvent, overrideQuery?: string) => {
     if (e) e.preventDefault();
     const textToSearch = overrideQuery || query;
@@ -451,6 +572,9 @@ export default function Home() {
     setTrialsQuery("");
     setValidationError(null);
     setTrialsError(null);
+    setDossierData(null);
+    setIndicationData(null);
+    setWhatIfResult(null);
     setHoveredEdge(null);
     setHoveredNode(null);
     setSelectedNode(null);
@@ -463,12 +587,56 @@ export default function Home() {
     try { localStorage.setItem("onco_query_history", JSON.stringify(newHistory)); } catch { /* ignore */ }
 
     try {
-      // Pipeline phase indicators (human-readable)
+      const apiUrl = API_URL;
+      
+      // Try SSE streaming first — falls back to regular POST if it fails
+      try {
+        const res = await fetch(`${apiUrl}/generate_stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: textToSearch }),
+        });
+        
+        if (res.ok && res.headers.get("content-type")?.includes("text/event-stream")) {
+          const reader = res.body?.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          
+          while (reader) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n\n");
+            buffer = lines.pop() || "";
+            
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              try {
+                const event = JSON.parse(line.slice(6));
+                if (event.message) setStatus(event.message);
+                
+                if (event.type === "complete" && event.data) {
+                  setHypotheses(event.data.hypotheses || []);
+                  setGraphData(event.data.graph_context);
+                  setPapers(event.data.papers || []);
+                  setStatus("Complete");
+                }
+              } catch { /* skip malformed events */ }
+            }
+          }
+          setLoading(false);
+          return;
+        }
+      } catch {
+        // SSE failed — fall back to regular POST below
+      }
+      
+      // Fallback: regular POST with synthetic status updates
       setTimeout(() => setStatus("Identifying genes, drugs & pathways..."), 800);
       setTimeout(() => setStatus("Connecting biological relationships..."), 1800);
       setTimeout(() => setStatus("Finding relevant research papers..."), 2800);
 
-      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -541,6 +709,17 @@ export default function Home() {
                 <div className={`w-2 h-2 rounded-full ${status.includes("papers") || status.includes("Finding") ? "bg-amber-500 animate-pulse" : "bg-green-500"}`}></div>
                 <span className="text-slate-600">Literature</span>
             </div>
+            {graphData && (
+              <ExportReport
+                query={query}
+                hypotheses={hypotheses}
+                graphData={graphData}
+                papers={papers}
+                validationData={validationData}
+                drData={drData}
+                trialsData={trialsData}
+              />
+            )}
             </div>
         )}
       </header>
@@ -830,6 +1009,35 @@ export default function Home() {
                     <Activity size={16} />
                     <span>Trials</span>
                 </button>
+                <div className="w-px bg-slate-200 my-1 mx-1"></div>
+                <button
+                    onClick={handleDossier}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "dossier" ? "bg-blue-50 text-blue-600 shadow-sm border border-blue-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <Target size={16} />
+                    <span>Dossier</span>
+                </button>
+                <button
+                    onClick={handleIndications}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "indications" ? "bg-violet-50 text-violet-600 shadow-sm border border-violet-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <TrendingUp size={16} />
+                    <span>Indications</span>
+                </button>
+                <button
+                    onClick={() => setViewMode("whatif")}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "whatif" ? "bg-amber-50 text-amber-600 shadow-sm border border-amber-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <Zap size={16} />
+                    <span>What-If</span>
+                </button>
+                <button
+                    onClick={() => setViewMode("competitive")}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "competitive" ? "bg-blue-50 text-blue-600 shadow-sm border border-blue-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <BarChart3 size={16} />
+                    <span>Intel</span>
+                </button>
             </div>
 
             <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-slate-50/30">
@@ -838,7 +1046,16 @@ export default function Home() {
             
                 {graphData ? (
                     <>
-                        {viewMode === "graph" && (
+                        {viewMode === "graph" && useInteractiveGraph && (
+                            <InteractiveGraph
+                                nodes={graphData.nodes}
+                                links={graphData.links}
+                                stats={graphData.stats}
+                                legend={graphData.legend}
+                            />
+                        )}
+
+                        {viewMode === "graph" && !useInteractiveGraph && (
                             <>
                                 {/* Rich Graph Legend (from backend) */}
                                 <div className="absolute top-4 right-6 bg-white/95 backdrop-blur-sm p-4 rounded-xl border border-slate-200 shadow-lg text-xs space-y-2 z-10 min-w-[180px]">
@@ -2004,6 +2221,52 @@ export default function Home() {
                                         disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
                                     />
                                 )}
+                            </div>
+                        )}
+
+                        {viewMode === "dossier" && (
+                            <div className="w-full h-full overflow-auto bg-slate-50/30">
+                                <TargetDossier
+                                    data={dossierData}
+                                    loading={dossierLoading}
+                                    onGenerate={handleDossier}
+                                    gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
+                                    disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
+                                />
+                            </div>
+                        )}
+
+                        {viewMode === "indications" && (
+                            <div className="w-full h-full overflow-auto bg-slate-50/30">
+                                <IndicationHeatmap
+                                    data={indicationData}
+                                    loading={indicationLoading}
+                                    onFetch={handleIndications}
+                                    gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
+                                />
+                            </div>
+                        )}
+
+                        {viewMode === "whatif" && (
+                            <div className="w-full h-full overflow-auto bg-slate-50/30">
+                                <WhatIfSimulator
+                                    result={whatIfResult}
+                                    loading={whatIfLoading}
+                                    availableNodes={(graphData?.nodes || []).map(n => ({ id: n.id, label: n.label || n.id, type: n.type }))}
+                                    onSimulate={handleWhatIf}
+                                    onReset={() => setWhatIfResult(null)}
+                                />
+                            </div>
+                        )}
+
+                        {viewMode === "competitive" && (
+                            <div className="w-full h-full overflow-auto bg-slate-50/30">
+                                <CompetitiveDashboard
+                                    trialsData={trialsData}
+                                    patentData={drData?.patent}
+                                    gene={graphData?.nodes.find(n => n.type.toLowerCase() === 'gene')?.id}
+                                    disease={graphData?.nodes.find(n => n.type.toLowerCase() === 'disease')?.id || "Cancer"}
+                                />
                             </div>
                         )}
                     </>
