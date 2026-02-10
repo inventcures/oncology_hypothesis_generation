@@ -50,15 +50,15 @@ export default function WhatIfSimulator({ result, loading, availableNodes, onSim
   };
   
   return (
-    <div className="w-full h-full overflow-auto p-8">
+    <div className="w-full h-full overflow-auto">
       <div className="max-w-5xl mx-auto space-y-6">
         {/* Controls */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+          <h3 className="text-xl font-bold text-slate-800 mb-2 flex items-center gap-2">
             <Zap className="text-amber-500" size={20} />
             What-If Perturbation Simulator
           </h3>
-          <p className="text-xs text-slate-500 mb-4">
+          <p className="text-sm text-slate-500 mb-4">
             Select a target gene and perturbation type to simulate downstream effects through the knowledge graph.
             This is a qualitative network analysis, not a quantitative ODE model.
           </p>

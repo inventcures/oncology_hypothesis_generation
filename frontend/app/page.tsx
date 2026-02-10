@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle, GitBranch, History, RefreshCw, Zap, TrendingUp, FileDown } from "lucide-react";
+import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle, GitBranch, History, RefreshCw, Zap, TrendingUp, FileDown, Loader2 } from "lucide-react";
+import PipelineStepper, { INITIAL_PIPELINE_STEPS, type PipelineStep } from "./components/PipelineStepper";
 
 // Dynamically import components to avoid SSR issues
 const MolstarViewer = dynamic(() => import("./components/MolstarViewer"), {
@@ -294,10 +295,45 @@ export default function Home() {
   // What-If simulator state
   const [whatIfResult, setWhatIfResult] = useState<any>(null);
   const [whatIfLoading, setWhatIfLoading] = useState(false);
+  // Pipeline progress state
+  const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
+  const [progress, setProgress] = useState(0);
+  const [pipelineStartTime, setPipelineStartTime] = useState<number | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // Pipeline step helpers
+  const advanceStep = useCallback((stepId: string) => {
+    setPipelineSteps(prev => prev.map(s =>
+      s.id === stepId && s.status === "pending"
+        ? { ...s, status: "active" as const, startedAt: Date.now() }
+        : s
+    ));
+  }, []);
+
+  const completeStep = useCallback((stepId: string, detail?: string) => {
+    setPipelineSteps(prev => prev.map(s =>
+      s.id === stepId && s.status !== "done"
+        ? { ...s, status: "done" as const, completedAt: Date.now(), detail }
+        : s
+    ));
+  }, []);
+
+  const completeAllSteps = useCallback(() => {
+    setPipelineSteps(prev => prev.map(s =>
+      s.status !== "done" ? { ...s, status: "done" as const, completedAt: Date.now() } : s
+    ));
+  }, []);
+
+  const errorStep = useCallback((stepId: string, msg: string) => {
+    setPipelineSteps(prev => prev.map(s =>
+      s.id === stepId
+        ? { ...s, status: "error" as const, errorMsg: msg }
+        : s
+    ));
   }, []);
 
   // --- URL State: read query from URL on mount ---
@@ -328,6 +364,20 @@ export default function Home() {
     const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
     window.history.replaceState({}, "", newUrl);
   }, [query, viewMode, hasSearched]);
+
+  // --- Progress interpolation: smooth fill between SSE events ---
+  useEffect(() => {
+    if (!loading || progress >= 100) return;
+    const targets = [10, 38, 68, 78, 88, 98];
+    const nextTarget = targets.find(t => t > progress) ?? progress;
+    const interval = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= nextTarget) return prev;
+        return prev + 0.5;
+      });
+    }, 200);
+    return () => clearInterval(interval);
+  }, [loading, progress]);
 
   // --- Export helpers ---
   const exportCSV = useCallback(() => {
@@ -580,6 +630,9 @@ export default function Home() {
     setSelectedNode(null);
     setViewMode("graph");
     setStatus("Analyzing your question...");
+    setPipelineSteps(INITIAL_PIPELINE_STEPS.map(s => ({ ...s, status: "pending" as const })));
+    setProgress(0);
+    setPipelineStartTime(Date.now());
 
     // Save to query history
     const newHistory = [{text: textToSearch, time: Date.now()}, ...queryHistory.filter(h => h.text !== textToSearch)].slice(0, 20);
@@ -615,12 +668,38 @@ export default function Home() {
               try {
                 const event = JSON.parse(line.slice(6));
                 if (event.message) setStatus(event.message);
-                
-                if (event.type === "complete" && event.data) {
-                  setHypotheses(event.data.hypotheses || []);
-                  setGraphData(event.data.graph_context);
-                  setPapers(event.data.papers || []);
-                  setStatus("Complete");
+                if (event.progress !== undefined) {
+                  setProgress(Math.round(event.progress * 100));
+                }
+
+                switch (event.type) {
+                  case "status":
+                    if (event.progress <= 0.1) advanceStep("ner");
+                    else if (event.progress <= 0.5) { completeStep("kg"); advanceStep("lit"); }
+                    else if (event.progress <= 0.8) { completeStep("lit"); advanceStep("rank"); }
+                    else if (event.progress <= 0.9) { completeStep("rank"); advanceStep("hypothesis"); }
+                    break;
+                  case "kg_complete":
+                    completeStep("ner");
+                    completeStep("kg", `${event.data?.node_count ?? 0} nodes, ${event.data?.edge_count ?? 0} edges`);
+                    advanceStep("lit");
+                    break;
+                  case "papers_complete":
+                    completeStep("lit", `Found ${event.data?.paper_count ?? 0} papers`);
+                    advanceStep("rank");
+                    break;
+                  case "complete":
+                    completeAllSteps();
+                    if (event.data) {
+                      setHypotheses(event.data.hypotheses || []);
+                      setGraphData(event.data.graph_context);
+                      setPapers(event.data.papers || []);
+                      setStatus("Complete");
+                    }
+                    break;
+                  case "error":
+                    errorStep(event.step || "kg", event.message);
+                    break;
                 }
               } catch { /* skip malformed events */ }
             }
@@ -632,10 +711,12 @@ export default function Home() {
         // SSE failed — fall back to regular POST below
       }
       
-      // Fallback: regular POST with synthetic status updates
-      setTimeout(() => setStatus("Identifying genes, drugs & pathways..."), 800);
-      setTimeout(() => setStatus("Connecting biological relationships..."), 1800);
-      setTimeout(() => setStatus("Finding relevant research papers..."), 2800);
+      // Fallback: regular POST with synthetic status updates + pipeline stepper
+      setTimeout(() => { setStatus("Identifying genes, drugs & pathways..."); advanceStep("ner"); setProgress(10); }, 300);
+      setTimeout(() => { setStatus("Building knowledge graph..."); completeStep("ner"); advanceStep("kg"); setProgress(30); }, 800);
+      setTimeout(() => { setStatus("Connecting biological relationships..."); completeStep("kg"); advanceStep("lit"); setProgress(50); }, 1800);
+      setTimeout(() => { setStatus("Finding relevant research papers..."); completeStep("lit"); advanceStep("rank"); setProgress(70); }, 2800);
+      setTimeout(() => { completeStep("rank"); advanceStep("hypothesis"); setProgress(85); }, 3500);
 
       const res = await fetch(`${apiUrl}/generate`, {
         method: "POST",
@@ -695,32 +776,24 @@ export default function Home() {
           <h1 className="text-xl font-bold tracking-tight text-slate-800">Onco-TTT</h1>
         </div>
         
-        {hasSearched && (
-            <div className="flex gap-6 text-sm font-medium">
-            <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${status.includes("genes") || status.includes("Identifying") ? "bg-indigo-500 animate-pulse" : "bg-green-500"}`}></div>
-                <span className="text-slate-600">Entity Extraction</span>
-            </div>
-            <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${status.includes("Connecting") || status.includes("relationships") ? "bg-blue-500 animate-pulse" : "bg-green-500"}`}></div>
-                <span className="text-slate-600">Knowledge Graph</span>
-            </div>
-            <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${status.includes("papers") || status.includes("Finding") ? "bg-amber-500 animate-pulse" : "bg-green-500"}`}></div>
-                <span className="text-slate-600">Literature</span>
-            </div>
-            {graphData && (
-              <ExportReport
-                query={query}
-                hypotheses={hypotheses}
-                graphData={graphData}
-                papers={papers}
-                validationData={validationData}
-                drData={drData}
-                trialsData={trialsData}
-              />
-            )}
-            </div>
+        {hasSearched && loading && (
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            <Loader2 size={14} className="animate-spin text-blue-500" />
+            <span className="font-mono">{Math.round(progress)}%</span>
+            <span className="text-slate-400">—</span>
+            <span>{status}</span>
+          </div>
+        )}
+        {hasSearched && !loading && graphData && (
+          <ExportReport
+            query={query}
+            hypotheses={hypotheses}
+            graphData={graphData}
+            papers={papers}
+            validationData={validationData}
+            drData={drData}
+            trialsData={trialsData}
+          />
         )}
       </header>
 
@@ -860,10 +933,23 @@ export default function Home() {
                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                   Live Feed
                 </h3>
-                {status !== "Idle" && status !== "Complete" && (
-                  <span className="text-xs text-blue-600 font-mono animate-pulse">{status}</span>
-                )}
             </div>
+
+            {loading && (
+              <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-blue-700">Processing</span>
+                  <span className="text-xs text-blue-500 font-mono">{Math.round(progress)}%</span>
+                </div>
+                <div className="w-full bg-blue-100 rounded-full h-1.5">
+                  <div
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <p className="text-xs text-blue-600 mt-1.5">{status}</p>
+              </div>
+            )}
 
             {status.startsWith("Error") && (
                  <div className="p-4 rounded-lg bg-red-50 border border-red-100 text-sm mb-4">
@@ -1044,6 +1130,16 @@ export default function Home() {
                 {/* Background Grid */}
                 <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent calc(100% / 40 - 1px), #0f172a calc(100% / 40 - 1px), #0f172a calc(100% / 40)), repeating-linear-gradient(0deg, transparent, transparent calc(100% / 40 - 1px), #0f172a calc(100% / 40 - 1px), #0f172a calc(100% / 40))' }} />
             
+                {loading && !graphData && (
+                    <div className="flex items-center justify-center w-full h-full absolute inset-0 z-10">
+                      <PipelineStepper
+                        steps={pipelineSteps}
+                        progress={progress}
+                        startTime={pipelineStartTime}
+                      />
+                    </div>
+                )}
+
                 {graphData ? (
                     <>
                         {viewMode === "graph" && useInteractiveGraph && (
@@ -1334,7 +1430,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "table" && (
-                            <div className="w-full h-full p-12 overflow-auto">
+                            <div className="w-full h-full pt-6 px-8 pb-8 overflow-auto">
                                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden max-w-5xl mx-auto">
                                      <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-start justify-between">
                                        <div>
@@ -1413,7 +1509,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "metrics" && (
-                            <div className="w-full h-full p-12 flex flex-col items-center justify-center">
+                            <div className="w-full h-full pt-6 px-8 pb-8 overflow-auto">
                                 <div className="max-w-4xl w-full mb-8 text-center">
                                     <h3 className="text-2xl font-bold text-slate-800 mb-2">Hypothesis Evaluation Metrics</h3>
                                     <p className="text-slate-500">
@@ -1488,7 +1584,7 @@ export default function Home() {
                         )}
 
                          {viewMode === "papers" && (
-                             <div className="w-full h-full p-12 overflow-auto">
+                             <div className="w-full h-full pt-6 px-8 pb-8 overflow-auto">
                                  {papers.length > 0 && (
                                    <div className="max-w-7xl mx-auto mb-4 flex justify-end">
                                      <button
@@ -1541,7 +1637,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "validate" && (
-                            <div className="w-full h-full bg-slate-50/30">
+                            <div className="w-full h-full pt-6 px-8 pb-8 overflow-auto bg-slate-50/30">
                                 {validationError ? (
                                     <div className="flex items-center justify-center h-full">
                                         <div className="bg-white p-8 rounded-2xl shadow-lg border border-red-200 max-w-md text-center">
@@ -1568,7 +1664,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "pathway" && (
-                            <div className="w-full h-full overflow-auto bg-slate-50/30 p-4">
+                            <div className="w-full h-full overflow-auto bg-slate-50/30 pt-6 px-8 pb-8">
                                 <PathwayView
                                     nodes={graphData?.nodes || []}
                                     links={graphData?.links || []}
@@ -1577,7 +1673,7 @@ export default function Home() {
                         )}
 
                          {viewMode === "deep_research" && (
-                             <div className="w-full h-full p-12 overflow-auto bg-slate-50/50">
+                             <div className="w-full h-full pt-6 px-8 pb-8 overflow-auto bg-slate-50/50">
                                  {!drData ? (
                                      <div className="flex flex-col items-center justify-center h-full">
                                          <div className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 max-w-md text-center">
@@ -2198,7 +2294,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "trials" && (
-                            <div className="w-full h-full overflow-auto bg-slate-50/30 p-6">
+                            <div className="w-full h-full overflow-auto bg-slate-50/30 pt-6 px-8 pb-8">
                                 {trialsError ? (
                                     <div className="flex items-center justify-center h-full">
                                         <div className="bg-white p-8 rounded-2xl shadow-lg border border-red-200 max-w-md text-center">
@@ -2225,7 +2321,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "dossier" && (
-                            <div className="w-full h-full overflow-auto bg-slate-50/30">
+                            <div className="w-full h-full overflow-auto bg-slate-50/30 pt-6 px-8 pb-8">
                                 <TargetDossier
                                     data={dossierData}
                                     loading={dossierLoading}
@@ -2237,7 +2333,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "indications" && (
-                            <div className="w-full h-full overflow-auto bg-slate-50/30">
+                            <div className="w-full h-full overflow-auto bg-slate-50/30 pt-6 px-8 pb-8">
                                 <IndicationHeatmap
                                     data={indicationData}
                                     loading={indicationLoading}
@@ -2248,7 +2344,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "whatif" && (
-                            <div className="w-full h-full overflow-auto bg-slate-50/30">
+                            <div className="w-full h-full overflow-auto bg-slate-50/30 pt-6 px-8 pb-8">
                                 <WhatIfSimulator
                                     result={whatIfResult}
                                     loading={whatIfLoading}
@@ -2260,7 +2356,7 @@ export default function Home() {
                         )}
 
                         {viewMode === "competitive" && (
-                            <div className="w-full h-full overflow-auto bg-slate-50/30">
+                            <div className="w-full h-full overflow-auto bg-slate-50/30 pt-6 px-8 pb-8">
                                 <CompetitiveDashboard
                                     trialsData={trialsData}
                                     patentData={drData?.patent}

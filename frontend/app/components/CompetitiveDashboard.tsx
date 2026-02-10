@@ -73,10 +73,10 @@ export default function CompetitiveDashboard({ trialsData, patentData, gene, dis
   }
   
   return (
-    <div className="w-full h-full overflow-auto p-8">
+    <div className="w-full h-full overflow-auto">
       <div className="max-w-6xl mx-auto space-y-6">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">
+          <h2 className="text-xl font-bold text-slate-800">
             Competitive Landscape: <span className="text-blue-600">{gene}</span> {disease ? `in ${disease}` : ""}
           </h2>
           <p className="text-sm text-slate-500">Combined clinical trials and patent intelligence</p>

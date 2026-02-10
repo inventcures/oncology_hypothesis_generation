@@ -263,30 +263,32 @@ def _collect_evidence(
         src, tgt = link.get("source"), link.get("target")
         if src == node_id and tgt in partner_map:
             partner = partner_map[tgt]
-            items.append({
-                "type": "graph_edge",
-                "source": node_label,
-                "target": partner.get("label") or partner.get("id"),
-                "relation": link.get("relation", default_relation),
-                "weight": link.get("weight", 0.5),
-            })
+            items.append(
+                {
+                    "type": "graph_edge",
+                    "source": node_label,
+                    "target": partner.get("label") or partner.get("id"),
+                    "relation": link.get("relation", default_relation),
+                    "weight": link.get("weight", 0.5),
+                }
+            )
         elif tgt == node_id and src in partner_map:
             partner = partner_map[src]
-            items.append({
-                "type": "graph_edge",
-                "source": partner.get("label") or partner.get("id"),
-                "target": node_label,
-                "relation": link.get("relation", default_relation),
-                "weight": link.get("weight", 0.5),
-            })
+            items.append(
+                {
+                    "type": "graph_edge",
+                    "source": partner.get("label") or partner.get("id"),
+                    "target": node_label,
+                    "relation": link.get("relation", default_relation),
+                    "weight": link.get("weight", 0.5),
+                }
+            )
         if len(items) >= max_items:
             break
     return items
 
 
-def _inject_activations(
-    nodes: List[Dict], activations: Dict[str, float]
-) -> None:
+def _inject_activations(nodes: List[Dict], activations: Dict[str, float]) -> None:
     """Inject activation scores into graph nodes for frontend rendering."""
     for node in nodes:
         node_id = node.get("id", "")
@@ -295,7 +297,8 @@ def _inject_activations(
         if act_score > ACTIVATION_GLOW_THRESHOLD:
             node["glow"] = True
             node["radius"] = min(
-                node.get("radius", DEFAULT_NODE_RADIUS) * (1 + act_score * ACTIVATION_RADIUS_BOOST),
+                node.get("radius", DEFAULT_NODE_RADIUS)
+                * (1 + act_score * ACTIVATION_RADIUS_BOOST),
                 MAX_NODE_RADIUS,
             )
 
@@ -432,8 +435,12 @@ def _generate_hypotheses(
         if targets:
             h_idx += 1
             evidence_items = _collect_evidence(
-                drug.get("id", ""), drug_name, links, genes,
-                default_relation="targets", adj=adj
+                drug.get("id", ""),
+                drug_name,
+                links,
+                genes,
+                default_relation="targets",
+                adj=adj,
             )
             hypotheses.append(
                 Hypothesis(
@@ -486,8 +493,12 @@ def _generate_hypotheses(
         if linked_genes_in_pw:
             h_idx += 1
             evidence_items = _collect_evidence(
-                pw.get("id", ""), pw_name, links, genes,
-                default_relation="involves", adj=adj
+                pw.get("id", ""),
+                pw_name,
+                links,
+                genes,
+                default_relation="involves",
+                adj=adj,
             )
             hypotheses.append(
                 Hypothesis(
@@ -528,7 +539,11 @@ def read_root():
     return {"message": "Onco-TTT API is running", "status": "active"}
 
 
-@app.post("/generate", response_model=GenerationResponse, dependencies=[Depends(verify_api_key)])
+@app.post(
+    "/generate",
+    response_model=GenerationResponse,
+    dependencies=[Depends(verify_api_key)],
+)
 async def generate_hypotheses(query: Query):
     """
     Main hypothesis generation pipeline.
@@ -843,9 +858,21 @@ async def generate_dossier(req: DossierRequest):
     # Compute Go/No-Go score (weighted composite)
     scores = []
     if validation and isinstance(validation, dict):
-        scores.append(("validation", validation.get("overall_score", 0.5), DOSSIER_WEIGHT_VALIDATION))
+        scores.append(
+            (
+                "validation",
+                validation.get("overall_score", 0.5),
+                DOSSIER_WEIGHT_VALIDATION,
+            )
+        )
     if structure and isinstance(structure, dict):
-        scores.append(("druggability", structure.get("druggability_score", 0.5), DOSSIER_WEIGHT_DRUGGABILITY))
+        scores.append(
+            (
+                "druggability",
+                structure.get("druggability_score", 0.5),
+                DOSSIER_WEIGHT_DRUGGABILITY,
+            )
+        )
     if patents and isinstance(patents, dict):
         patent_score = 1.0 - (patents.get("scooped_score", 50) / 100)
         scores.append(("ip_freedom", patent_score, DOSSIER_WEIGHT_IP_FREEDOM))
@@ -1204,8 +1231,7 @@ async def get_drug_safety(drug_name: str, limit: int = 10):
         results = data.get("results", [])
 
         adverse_events = [
-            {"reaction": r.get("term", ""), "count": r.get("count", 0)}
-            for r in results
+            {"reaction": r.get("term", ""), "count": r.get("count", 0)} for r in results
         ]
 
         count_resp = await shared_client.get(
@@ -1243,23 +1269,53 @@ async def generate_stream(query: Query):
     """
 
     async def event_stream():
+        import time as _time
+
+        _t0 = _time.monotonic()
+
+        def _sse(payload: dict) -> str:
+            payload["elapsed_ms"] = int((_time.monotonic() - _t0) * 1000)
+            return f"data: {json.dumps(payload)}\n\n"
+
         req_graph = OncoGraph()
         req_graph.ot_client = ot_client
         tissue_type = _infer_tissue(query.text)
 
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Extracting biological entities...', 'progress': 0.1})}\n\n"
+        yield _sse(
+            {
+                "type": "status",
+                "message": "Extracting biological entities...",
+                "progress": 0.1,
+            }
+        )
 
         # Run KG build
         try:
             kg_result = await req_graph.build_from_query(query.text)
             subgraph_data = req_graph.get_subgraph_data()
-            yield f"data: {json.dumps({'type': 'kg_complete', 'message': 'Knowledge graph built', 'progress': 0.4, 'data': {'node_count': len(subgraph_data.get('nodes', [])), 'edge_count': len(subgraph_data.get('links', []))}})}\n\n"
+            yield _sse(
+                {
+                    "type": "kg_complete",
+                    "message": "Knowledge graph built",
+                    "progress": 0.4,
+                    "data": {
+                        "node_count": len(subgraph_data.get("nodes", [])),
+                        "edge_count": len(subgraph_data.get("links", [])),
+                    },
+                }
+            )
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'step': 'kg', 'message': str(e)})}\n\n"
+            yield _sse({"type": "error", "step": "kg", "message": str(e)})
             subgraph_data = {"nodes": [], "links": []}
 
         # Run lit search in parallel with atlas
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Searching literature & atlas...', 'progress': 0.5})}\n\n"
+        yield _sse(
+            {
+                "type": "status",
+                "message": "Searching literature & atlas...",
+                "progress": 0.5,
+            }
+        )
 
         papers_result, atlas_result = await asyncio.gather(
             lit_agent.search_papers(query.text, limit=6),
@@ -1274,10 +1330,23 @@ async def generate_stream(query: Query):
             else {"cells": []}
         )
 
-        yield f"data: {json.dumps({'type': 'papers_complete', 'message': f'Found {len(papers)} papers', 'progress': 0.7, 'data': {'paper_count': len(papers)}})}\n\n"
+        yield _sse(
+            {
+                "type": "papers_complete",
+                "message": f"Found {len(papers)} papers",
+                "progress": 0.7,
+                "data": {"paper_count": len(papers)},
+            }
+        )
 
         # Activation ranking
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Ranking nodes by relevance...', 'progress': 0.8})}\n\n"
+        yield _sse(
+            {
+                "type": "status",
+                "message": "Ranking nodes by relevance...",
+                "progress": 0.8,
+            }
+        )
 
         activations = ttt_engine.rank(req_graph.graph, query.text)
 
@@ -1286,7 +1355,9 @@ async def generate_stream(query: Query):
         hypotheses_list = _generate_hypotheses(subgraph_data, query.text, activations)
         hypotheses = [h.model_dump() for h in hypotheses_list]
 
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Generating hypotheses...', 'progress': 0.9})}\n\n"
+        yield _sse(
+            {"type": "status", "message": "Generating hypotheses...", "progress": 0.9}
+        )
 
         # Final complete event with all data
         final_data = {
@@ -1300,7 +1371,7 @@ async def generate_stream(query: Query):
                 "extraction": req_graph.get_last_extraction(),
             },
         }
-        yield f"data: {json.dumps(final_data)}\n\n"
+        yield _sse(final_data)
 
     return StreamingResponse(
         event_stream(),
