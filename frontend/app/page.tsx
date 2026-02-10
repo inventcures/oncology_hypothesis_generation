@@ -949,7 +949,7 @@ export default function Home() {
         {/* Main Canvas Area */}
         <section className="flex-1 flex flex-col relative bg-white">
             {/* Toolbar */}
-            <div className="absolute top-4 left-6 z-10 flex gap-1 bg-white/80 backdrop-blur-md border border-slate-200 p-1 rounded-lg shadow-sm">
+            <div className="shrink-0 mx-6 mt-4 mb-2 z-10 flex gap-1 bg-white/80 backdrop-blur-md border border-slate-200 p-1 rounded-lg shadow-sm w-fit">
                 <button 
                     onClick={() => setViewMode("graph")}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "graph" ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
@@ -1040,7 +1040,7 @@ export default function Home() {
                 </button>
             </div>
 
-            <div className="flex-1 relative overflow-hidden flex items-center justify-center bg-slate-50/30">
+            <div className="flex-1 relative overflow-auto bg-slate-50/30">
                 {/* Background Grid */}
                 <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent calc(100% / 40 - 1px), #0f172a calc(100% / 40 - 1px), #0f172a calc(100% / 40)), repeating-linear-gradient(0deg, transparent, transparent calc(100% / 40 - 1px), #0f172a calc(100% / 40 - 1px), #0f172a calc(100% / 40))' }} />
             
@@ -2271,14 +2271,16 @@ export default function Home() {
                         )}
                     </>
                 ) : (
-                    <div className="text-center">
-                        <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <Microscope size={40} className="text-slate-300" />
-                        </div>
-                         <h3 className="text-xl font-semibold text-slate-900 mb-2">Ready to Explore</h3>
-                         <p className="text-slate-500 max-w-sm mx-auto">
-                             Enter a question on the left to start your analysis and see the results here.
-                         </p>
+                    <div className="flex items-center justify-center w-full h-full">
+                      <div className="text-center">
+                          <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                              <Microscope size={40} className="text-slate-300" />
+                          </div>
+                           <h3 className="text-xl font-semibold text-slate-900 mb-2">Ready to Explore</h3>
+                           <p className="text-slate-500 max-w-sm mx-auto">
+                               Enter a question on the left to start your analysis and see the results here.
+                           </p>
+                      </div>
                     </div>
                 )}
             </div>
