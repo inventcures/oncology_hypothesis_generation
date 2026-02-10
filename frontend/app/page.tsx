@@ -336,24 +336,34 @@ export default function Home() {
     ));
   }, []);
 
-  // --- URL State: read query from URL on mount ---
+  // --- URL State: read query from URL on mount, auto-submit if ?q= present ---
+  const [pendingView, setPendingView] = useState<string | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const urlQuery = params.get("q");
     const urlView = params.get("view");
-    if (urlQuery) {
-      setQuery(urlQuery);
-    }
     if (urlView && ["graph","table","metrics","papers","validate","deep_research","trials","pathway","dossier","indications","whatif","competitive"].includes(urlView)) {
-      setViewMode(urlView as typeof viewMode);
+      setPendingView(urlView);
+    }
+    if (urlQuery) {
+      handleSubmit(undefined, urlQuery);
     }
     // Load history from localStorage
     try {
       const saved = localStorage.getItem("onco_query_history");
       if (saved) setQueryHistory(JSON.parse(saved));
     } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // --- URL State: apply pending view once results arrive ---
+  useEffect(() => {
+    if (pendingView && graphData) {
+      setViewMode(pendingView as typeof viewMode);
+      setPendingView(null);
+    }
+  }, [pendingView, graphData]);
 
   // --- URL State: update URL when query or viewMode changes ---
   useEffect(() => {
