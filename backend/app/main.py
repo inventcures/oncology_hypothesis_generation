@@ -11,7 +11,12 @@ import time
 logger = logging.getLogger(__name__)
 
 from .ark import OncoGraph, OpenTargetsClient
-from .ttt import QueryAdaptiveRanker
+from .ttt import (
+    QueryAdaptiveRanker,
+    RobustRanker,
+    AdversarialReviewer,
+    NeuroSymbolicLoop,
+)
 from .constants import (
     ACTIVATION_GLOW_THRESHOLD,
     ACTIVATION_RADIUS_BOOST,
@@ -110,7 +115,10 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None)):
 # OncoGraph is NOT global — it is created per-request to avoid concurrent state corruption.
 # Only the stateless OpenTargetsClient is shared (holds a persistent httpx connection pool).
 ot_client = OpenTargetsClient()
-ttt_engine = QueryAdaptiveRanker()
+base_ranker = QueryAdaptiveRanker()
+robust_ranker = RobustRanker(base_ranker)
+reviewer = AdversarialReviewer()
+ttt_engine = NeuroSymbolicLoop(robust_ranker, reviewer)
 lit_agent = LiteratureAgent()
 atlas_agent = AtlasAgent()
 structure_agent = StructureAgent(client=shared_client)
@@ -586,7 +594,9 @@ async def generate_hypotheses(query: Query):
 
     # 2. Query-Adaptive Ranking: Propagate activations through graph
     #    Scores reflect how relevant each node is to this specific query.
-    activations = ttt_engine.rank(req_graph.graph, query.text)
+    #    Uses Agentic Neuro-Symbolic Loop (Deep Think) for robust reasoning.
+    deep_think_result = await ttt_engine.run_deep_think(req_graph.graph, query.text)
+    activations = deep_think_result.get("activations", {})
 
     # 3. Get Rich Graph Data with Layout, colors, edge labels
     subgraph_data = req_graph.get_subgraph_data()
@@ -1343,12 +1353,32 @@ async def generate_stream(query: Query):
         yield _sse(
             {
                 "type": "status",
-                "message": "Ranking nodes by relevance...",
+                "message": "Initializing Deep Think engine...",
                 "progress": 0.8,
             }
         )
 
-        activations = ttt_engine.rank(req_graph.graph, query.text)
+        deep_think_result = None
+        # Use streaming version of Deep Think to provide granular feedback
+        async for event in ttt_engine.run_deep_think_stream(
+            req_graph.graph, query.text
+        ):
+            if event["type"] == "step_start":
+                yield _sse(
+                    {
+                        "type": "status",
+                        "message": event["message"],
+                        "progress": 0.8 + (event["step"] * 0.03),  # Increment slightly
+                    }
+                )
+            elif event["type"] == "status":
+                yield _sse({"type": "status", "message": event["message"]})
+            elif event["type"] == "result":
+                deep_think_result = event["data"]
+
+        activations = (
+            deep_think_result.get("activations", {}) if deep_think_result else {}
+        )
 
         _inject_activations(subgraph_data.get("nodes", []), activations)
 
