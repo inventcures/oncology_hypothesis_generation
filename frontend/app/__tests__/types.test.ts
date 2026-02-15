@@ -27,6 +27,7 @@ import type {
   DossierSection,
   QueryHistoryItem,
 } from "../types";
+import { FidelityLevel } from "../types";
 
 describe("Type definitions", () => {
   it("Hypothesis shape is valid", () => {
@@ -115,9 +116,9 @@ describe("Type definitions", () => {
       status: "pass",
       score: 85,
       title: "Essentiality",
-      subtitle: "DepMap CRISPR",
       summary: "KRAS is essential",
-      metric: { name: "Chronos Score", value: -1.2, interpretation: "< -1.0 = Essential" },
+      metrics: [{ name: "Chronos Score", value: -1.2, interpretation: "< -1.0 = Essential", fidelity: FidelityLevel.L3_BIOLOGICAL_FIT }],
+      details: {}
     };
     expect(check.status).toBe("pass");
     expect(check.score).toBeGreaterThanOrEqual(0);
@@ -193,13 +194,17 @@ describe("Mock API response shapes", () => {
       score: 50,
       title: "Test",
       summary: "Test summary",
+      metrics: [],
+      details: {}
     });
 
     const mockValidation: ValidationData = {
+      hypothesis_id: "test-h",
       gene: "KRAS",
       disease: "lung cancer",
       overall_score: 75,
       overall_status: "pass",
+      fidelity_reached: FidelityLevel.L3_BIOLOGICAL_FIT,
       checks: {
         essentiality: makeCheck("pass"),
         survival: makeCheck("pass"),
@@ -208,7 +213,8 @@ describe("Mock API response shapes", () => {
         biomarker: makeCheck("unknown"),
         competition: makeCheck("pass"),
       },
-      synthesis: { text: "KRAS is validated...", generated_by: "Template", exportable: true },
+      synthesis: "KRAS is validated...",
+      evidence_links: []
     };
     expect(mockValidation.overall_score).toBeGreaterThanOrEqual(0);
     expect(Object.keys(mockValidation.checks)).toHaveLength(6);

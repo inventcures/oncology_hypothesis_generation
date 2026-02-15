@@ -9,8 +9,6 @@ import {
 } from "lucide-react";
 import { ValidationData, ValidationCheck, FidelityLevel, ValidationMetric } from "../types";
 
-// ... existing helper components ...
-
 function FidelityBadge({ level }: { level: FidelityLevel }) {
   const config = {
     [FidelityLevel.L1_PLAUSIBILITY]: { icon: BookOpen, label: "L1: Plausibility", color: "text-slate-500", bg: "bg-slate-100" },
@@ -27,8 +25,6 @@ function FidelityBadge({ level }: { level: FidelityLevel }) {
     </div>
   );
 }
-
-// ... existing ScoreRing ...
 
 interface Props {
   data: ValidationData | null;
@@ -181,8 +177,6 @@ function ValidationCard({
   );
 }
 
-// ... KaplanMeierMini, BoxPlotMini, BarChartMini components ...
-
 // Main Dashboard Component
 export default function ValidationDashboard({ data, loading, onRun, gene, disease }: Props) {
   const [copied, setCopied] = useState(false);
@@ -195,7 +189,46 @@ export default function ValidationDashboard({ data, loading, onRun, gene, diseas
     }
   };
 
-  // ... Empty and Loading states ...
+  // Empty state
+  if (!data && !loading) {
+    return (
+      <div className="h-full flex items-center justify-center p-8">
+        <div className="text-center max-w-md">
+          <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Target className="w-10 h-10 text-blue-600" />
+          </div>
+          <h3 className="text-xl font-bold text-slate-800 mb-2">Target Validation</h3>
+          <p className="text-slate-500 mb-6">
+            Run comprehensive validation checks to assess if your target is essential, clinically relevant, safe, and tractable.
+          </p>
+          <button
+            onClick={onRun}
+            disabled={!gene}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all shadow-lg shadow-blue-500/20 disabled:shadow-none flex items-center gap-2 mx-auto"
+          >
+            <Activity size={18} />
+            Run Validation
+          </button>
+          {!gene && (
+            <p className="text-xs text-slate-400 mt-3">Search for a target first</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-600 font-medium">Running validation checks...</p>
+          <p className="text-xs text-slate-400 mt-1">Querying DepMap, TCGA, GTEx, ClinicalTrials.gov</p>
+        </div>
+      </div>
+    );
+  }
 
   // Results
   return (
@@ -258,10 +291,6 @@ export default function ValidationDashboard({ data, loading, onRun, gene, diseas
             )}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
 
         {/* Re-run button */}
         <div className="text-center pt-4">

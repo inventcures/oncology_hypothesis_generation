@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, FormEvent } from "react";
 import dynamic from "next/dynamic";
 import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle, GitBranch, History, RefreshCw, Zap, TrendingUp, FileDown, Loader2 } from "lucide-react";
 import PipelineStepper, { INITIAL_PIPELINE_STEPS, type PipelineStep } from "./components/PipelineStepper";
@@ -255,7 +255,8 @@ type DeepResearchData = {
   query: string;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
+// @ts-ignore
+const API_URL = (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : null) || "https://backend-production-baa6.up.railway.app";
 
 // --- ADRS Evolution View ---
 function ADRSEvolutionView({ data, loading }: { data: EvolutionResponse | null; loading: boolean }) {
@@ -343,7 +344,48 @@ function ADRSEvolutionView({ data, loading }: { data: EvolutionResponse | null; 
 
 export default function Home() {
   const [query, setQuery] = useState("");
-  // ... existing states ...
+  const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphLink[]; stats?: GraphStats; legend?: GraphLegendItem[] } | null>(null);
+  const [hoveredEdge, setHoveredEdge] = useState<number | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [status, setStatus] = useState("Idle");
+  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials" | "pathway" | "dossier" | "indications" | "whatif" | "competitive">("graph");
+  const [drData, setDrData] = useState<DeepResearchData | null>(null);
+  const [drLoading, setDrLoading] = useState(false);
+  const [validationData, setValidationData] = useState<any>(null);
+  const [validationLoading, setValidationLoading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [drError, setDrError] = useState<string | null>(null);
+  const [validationQuery, setValidationQuery] = useState<string>("");
+  const [trialsData, setTrialsData] = useState<any>(null);
+  const [trialsLoading, setTrialsLoading] = useState(false);
+  const [trialsQuery, setTrialsQuery] = useState("");
+  // Error states for user-facing error messages
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [trialsError, setTrialsError] = useState<string | null>(null);
+  // Query history (localStorage-backed)
+  const [queryHistory, setQueryHistory] = useState<{text: string; time: number}[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  // Interactive graph toggle
+  const [useInteractiveGraph, setUseInteractiveGraph] = useState(true);
+  // Dossier state
+  const [dossierData, setDossierData] = useState<any>(null);
+  const [dossierLoading, setDossierLoading] = useState(false);
+  // Indication expansion state
+  const [indicationData, setIndicationData] = useState<any>(null);
+  const [indicationLoading, setIndicationLoading] = useState(false);
+  // What-If simulator state
+  const [whatIfResult, setWhatIfResult] = useState<any>(null);
+  const [whatIfLoading, setWhatIfLoading] = useState(false);
+  // Pipeline progress state
+  const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
+  const [progress, setProgress] = useState(0);
+  const [pipelineStartTime, setPipelineStartTime] = useState<number | null>(null);
+
   const [evolutionData, setEvolutionData] = useState<EvolutionResponse | null>(null);
   const [evolutionLoading, setEvolutionLoading] = useState(false);
   const [mastReport, setMastReport] = useState<MASTReport | null>(null);
@@ -376,7 +418,7 @@ export default function Home() {
 
   // Pipeline step helpers
   const advanceStep = useCallback((stepId: string) => {
-    setPipelineSteps(prev => prev.map(s =>
+    setPipelineSteps((prev: PipelineStep[]) => prev.map(s =>
       s.id === stepId && s.status === "pending"
         ? { ...s, status: "active" as const, startedAt: Date.now() }
         : s
@@ -384,7 +426,7 @@ export default function Home() {
   }, []);
 
   const completeStep = useCallback((stepId: string, detail?: string) => {
-    setPipelineSteps(prev => prev.map(s =>
+    setPipelineSteps((prev: PipelineStep[]) => prev.map(s =>
       s.id === stepId && s.status !== "done"
         ? { ...s, status: "done" as const, completedAt: Date.now(), detail }
         : s
@@ -392,13 +434,13 @@ export default function Home() {
   }, []);
 
   const completeAllSteps = useCallback(() => {
-    setPipelineSteps(prev => prev.map(s =>
+    setPipelineSteps((prev: PipelineStep[]) => prev.map(s =>
       s.status !== "done" ? { ...s, status: "done" as const, completedAt: Date.now() } : s
     ));
   }, []);
 
   const errorStep = useCallback((stepId: string, msg: string) => {
-    setPipelineSteps(prev => prev.map(s =>
+    setPipelineSteps((prev: PipelineStep[]) => prev.map(s =>
       s.id === stepId
         ? { ...s, status: "error" as const, errorMsg: msg }
         : s
@@ -450,7 +492,7 @@ export default function Home() {
     const targets = [10, 38, 68, 78, 88, 98];
     const nextTarget = targets.find(t => t > progress) ?? progress;
     const interval = setInterval(() => {
-      setProgress(prev => {
+      setProgress((prev: number) => {
         if (prev >= nextTarget) return prev;
         return prev + 0.5;
       });
@@ -462,7 +504,7 @@ export default function Home() {
   const exportCSV = useCallback(() => {
     if (!graphData) return;
     const header = "Entity,Type,Confidence,Source";
-    const rows = graphData.nodes.map(n =>
+    const rows = graphData.nodes.map((n: GraphNode) =>
       `"${(n.label || n.id).replace(/"/g, '""')}","${n.type}","${((n.confidence || 0.5) * 100).toFixed(0)}%","${n.source || 'unknown'}"`
     );
     const csv = [header, ...rows].join("\n");
@@ -476,7 +518,7 @@ export default function Home() {
 
   const exportBibTeX = useCallback(() => {
     if (!papers.length) return;
-    const entries = papers.map((p, i) => {
+    const entries = papers.map((p: Paper, i: number) => {
       const key = `paper${i + 1}_${p.year || 'nd'}`;
       return `@article{${key},
   title={${p.title}},
@@ -514,8 +556,8 @@ export default function Home() {
     if (!graphData || graphData.nodes.length === 0) return;
     
     // Naive heuristic: Pick the first Gene node as the target
-    const targetNode = graphData.nodes.find(n => n.type.toLowerCase() === 'gene') || graphData.nodes[0];
-    const diseaseNode = graphData.nodes.find(n => n.type.toLowerCase() === 'disease') || { id: "Cancer" };
+    const targetNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === 'gene') || graphData.nodes[0];
+    const diseaseNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === 'disease') || { id: "Cancer" };
     
     // Extract mutation from query if present (e.g., "G12C", "V600E")
     const mutationMatch = query.match(/([A-Z]\d+[A-Z])/i);
@@ -557,8 +599,8 @@ export default function Home() {
   const handleValidation = useCallback(async () => {
     if (!graphData || graphData.nodes.length === 0) return;
     
-    const targetNode = graphData.nodes.find(n => n.type.toLowerCase() === 'gene') || graphData.nodes[0];
-    const diseaseNode = graphData.nodes.find(n => n.type.toLowerCase() === 'disease') || { id: "Cancer" };
+    const targetNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === 'gene') || graphData.nodes[0];
+    const diseaseNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === 'disease') || { id: "Cancer" };
     
     // Infer cancer type from query
     let cancerType = diseaseNode.id;
@@ -594,8 +636,8 @@ export default function Home() {
 
   const handleTrialsSearch = useCallback(async () => {
     if (!graphData?.nodes) return;
-    const geneNode = graphData.nodes.find((n) => n.type.toLowerCase() === "gene");
-    const diseaseNode = graphData.nodes.find((n) => n.type.toLowerCase() === "disease");
+    const geneNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === "gene");
+    const diseaseNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === "disease");
     const gene = geneNode?.id || "";
     const disease = diseaseNode?.id || "cancer";
     if (!gene) return;
@@ -619,8 +661,8 @@ export default function Home() {
 
   const handleDossier = useCallback(async () => {
     if (!graphData?.nodes) return;
-    const geneNode = graphData.nodes.find(n => n.type.toLowerCase() === "gene") || graphData.nodes[0];
-    const diseaseNode = graphData.nodes.find(n => n.type.toLowerCase() === "disease") || { id: "Cancer" };
+    const geneNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === "gene") || graphData.nodes[0];
+    const diseaseNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === "disease") || { id: "Cancer" };
     const mutationMatch = query.match(/([A-Z]\d+[A-Z])/i);
     const mutation = mutationMatch ? mutationMatch[1].toUpperCase() : null;
     const tissue = inferTissue();
@@ -645,7 +687,7 @@ export default function Home() {
 
   const handleIndications = useCallback(async () => {
     if (!graphData?.nodes) return;
-    const geneNode = graphData.nodes.find(n => n.type.toLowerCase() === "gene");
+    const geneNode = graphData.nodes.find((n: GraphNode) => n.type.toLowerCase() === "gene");
     if (!geneNode) return;
     
     setIndicationLoading(true);
@@ -680,7 +722,7 @@ export default function Home() {
     }
   }, [query]);
 
-  const handleSubmit = useCallback(async (e?: React.FormEvent, overrideQuery?: string) => {
+  const handleSubmit = useCallback(async (e?: FormEvent, overrideQuery?: string) => {
     if (e) e.preventDefault();
     const textToSearch = overrideQuery || query;
     if (!textToSearch) return;
@@ -714,7 +756,7 @@ export default function Home() {
     setPipelineStartTime(Date.now());
 
     // Save to query history
-    const newHistory = [{text: textToSearch, time: Date.now()}, ...queryHistory.filter(h => h.text !== textToSearch)].slice(0, 20);
+    const newHistory = [{text: textToSearch, time: Date.now()}, ...queryHistory.filter((h: {text: string}) => h.text !== textToSearch)].slice(0, 20);
     setQueryHistory(newHistory);
     try { localStorage.setItem("onco_query_history", JSON.stringify(newHistory)); } catch { /* ignore */ }
 
@@ -1071,7 +1113,7 @@ export default function Home() {
             )}
 
             <div className="space-y-4">
-              {hypotheses.map((h) => (
+              {hypotheses.map((h: Hypothesis) => (
                 <div
                   key={h.id}
                   className="group relative p-5 rounded-xl border border-slate-200 bg-white hover:border-blue-400 hover:shadow-lg transition-all cursor-pointer overflow-hidden"
@@ -1269,7 +1311,7 @@ export default function Home() {
                                             </span>
                                         )}
                                     </div>
-                                    {(graphData.legend || []).map((item) => (
+                                    {(graphData.legend || []).map((item: GraphLegendItem) => (
                                         <div key={item.type} className="flex items-center justify-between gap-2">
                                             <div className="flex items-center gap-2">
                                                 <span className="w-3 h-3 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: item.color }}></span>
@@ -1317,7 +1359,7 @@ export default function Home() {
                                 <svg className="w-full h-full" viewBox="0 0 800 600">
                                 <defs>
                                     {/* Color-deduplicated arrowheads */}
-                                    {Array.from(new Set(graphData.links.map(l => l.color || '#94a3b8'))).map((color) => (
+                                    {(Array.from(new Set(graphData.links.map((l: GraphLink) => l.color || '#94a3b8'))) as string[]).map((color: string) => (
                                         <marker key={`arrow-${color}`} id={`arrow-${color.replace('#', '')}`} markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse">
                                             <polygon points="0 0, 10 4, 0 8" fill={`${color}cc`} />
                                         </marker>
@@ -1350,9 +1392,9 @@ export default function Home() {
                                 </defs>
 
                                 {/* === EDGES === */}
-                                {graphData.links.map((link, i) => {
-                                    const sourceNode = graphData.nodes.find(n => n.id === link.source);
-                                    const targetNode = graphData.nodes.find(n => n.id === link.target);
+                                {graphData.links.map((link: GraphLink, i: number) => {
+                                    const sourceNode = graphData.nodes.find((n: GraphNode) => n.id === link.source);
+                                    const targetNode = graphData.nodes.find((n: GraphNode) => n.id === link.target);
                                     if (!sourceNode || !targetNode) return null;
                                     
                                     const isHovered = hoveredEdge === i;
@@ -1433,14 +1475,14 @@ export default function Home() {
                                 })}
 
                                 {/* === NODES === */}
-                                {graphData.nodes.map((node) => {
+                                {graphData.nodes.map((node: GraphNode) => {
                                     const nodeColor = getNodeColor(node);
                                     const borderColor = node.border_color || nodeColor;
                                     const radius = node.radius || 22;
                                     const isHovered = hoveredNode === node.id;
                                     const isSelected = selectedNode === node.id;
                                     const isDimmed = hoveredNode !== null && !isHovered && !graphData.links.some(
-                                        l => (l.source === hoveredNode && l.target === node.id) || (l.target === hoveredNode && l.source === node.id)
+                                        (l: GraphLink) => (l.source === hoveredNode && l.target === node.id) || (l.target === hoveredNode && l.source === node.id)
                                     );
                                     const displayRadius = isHovered ? radius + 4 : isSelected ? radius + 2 : radius;
 
@@ -1565,7 +1607,7 @@ export default function Home() {
                                              </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {graphData.nodes.map((n) => (
+                                            {graphData.nodes.map((n: GraphNode) => (
                                                  <tr key={n.id} className="hover:bg-slate-50/50 transition-colors">
                                                      <td className="px-6 py-4 font-medium text-slate-900">{n.label || n.id}</td>
                                                      <td className="px-6 py-4">
@@ -1634,7 +1676,7 @@ export default function Home() {
                                    </div>
                                  )}
                                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
-                                    {papers.map((p) => (
+                                    {papers.map((p: Paper) => (
                                         <div key={p.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow flex flex-col h-full">
                                             <div className="mb-4">
                                                 <span className="inline-block px-2 py-1 mb-2 text-xs font-semibold text-blue-600 bg-blue-50 rounded-md">
