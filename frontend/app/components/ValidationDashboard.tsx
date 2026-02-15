@@ -16,7 +16,7 @@ function FidelityBadge({ level }: { level: FidelityLevel }) {
     [FidelityLevel.L1_PLAUSIBILITY]: { icon: BookOpen, label: "L1: Plausibility", color: "text-slate-500", bg: "bg-slate-100" },
     [FidelityLevel.L2_TECHNICAL_FIT]: { icon: Microscope, label: "L2: Technical", color: "text-blue-500", bg: "bg-blue-100" },
     [FidelityLevel.L3_BIOLOGICAL_FIT]: { icon: Shield, label: "L3: Biological", color: "text-purple-500", bg: "bg-purple-100" },
-    [FidelityLevel.L4_臨床_FIT]: { icon: Stethoscope, label: "L4: Clinical", color: "text-emerald-500", bg: "bg-emerald-100" },
+    [FidelityLevel.L4_CLINICAL_FIT]: { icon: Stethoscope, label: "L4: Clinical", color: "text-emerald-500", bg: "bg-emerald-100" },
   }[level] || { icon: HelpCircle, label: "Unknown", color: "text-slate-400", bg: "bg-slate-50" };
 
   const Icon = config.icon;

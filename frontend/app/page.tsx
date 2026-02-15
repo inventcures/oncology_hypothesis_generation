@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { Send, Activity, Brain, ShieldCheck, Microscope, BarChart3, Network, Table as TableIcon, FileText, Sparkles, Search, ArrowRight, FlaskConical, Scale, Dna, FileEdit, AlertTriangle, CheckCircle, XCircle, Target, Download, Copy, X as XIcon, Info, HelpCircle, GitBranch, History, RefreshCw, Zap, TrendingUp, FileDown, Loader2 } from "lucide-react";
 import PipelineStepper, { INITIAL_PIPELINE_STEPS, type PipelineStep } from "./components/PipelineStepper";
+import { EvolutionResponse, MASTReport, ValidationScorecard, FidelityLevel } from "./types";
 
 // Dynamically import components to avoid SSR issues
 const MolstarViewer = dynamic(() => import("./components/MolstarViewer"), {

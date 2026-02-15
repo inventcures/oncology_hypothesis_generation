@@ -49,8 +49,8 @@ function generateHTML(props: ExportReportProps): string {
   
   const validationHTML = validationData ? `
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:16px;margin-bottom:12px;">
-      <h3 style="margin:0 0 8px 0;">Validation Score: ${(validationData.overall_score * 100).toFixed(0)}%</h3>
-      <p style="font-size:14px;color:#64748b;">${validationData.synthesis?.text || ''}</p>
+      <h3 style="margin:0 0 8px 0;">Validation Score: ${validationData.overall_score}/100</h3>
+      <p style="font-size:14px;color:#64748b;">${validationData.synthesis || ''}</p>
     </div>
   ` : '<p style="color:#94a3b8;">Validation not run</p>';
   
