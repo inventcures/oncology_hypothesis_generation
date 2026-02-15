@@ -103,7 +103,9 @@ class AdversarialReviewer:
         """
         try:
             response = await self.client.messages.create(model="claude-3-5-sonnet-20240620", max_tokens=500, messages=[{"role": "user", "content": prompt}])
-            result = json.loads(response.content[0].text[response.content[0].text.find("{"):response.content[0].text.rfind("}")+1])
+            content = response.content[0].text
+            json_str = content[content.find("{"):content.rfind("}")+1]
+            result = json.loads(json_str)
             return result.get("passed", True), result.get("critique", ""), [MASTFailureMode(f) for f in result.get("failures", [])]
         except: return True, "Review error", []
 
@@ -114,17 +116,32 @@ class NeuroSymbolicLoop:
         self.booster = CrossDomainBooster()
         self.mast_monitor = MASTMonitor(reviewer.client)
 
-    async def run_discovery(self, graph: nx.DiGraph, initial_query: str, max_steps: int = 3):
-        context = []
+    async def run_deep_think_stream(self, graph: nx.DiGraph, initial_query: str, max_steps: int = 3):
         current_query = initial_query
         trace = []
+        cumulative_activations = {}
 
         for step in range(max_steps):
+            yield {
+                "type": "step_start",
+                "step": step + 1,
+                "query": current_query,
+                "message": f"Deep Think Cycle {step + 1}: Investigating '{current_query}'",
+            }
+
             # 1. Rank & Boost
+            yield {"type": "status", "message": f"Step {step + 1}: Robustified Ranking..."}
             results = await self.ranker.rank_robust(graph, current_query)
+            
+            yield {"type": "status", "message": f"Step {step + 1}: Cross-Domain Boosting..."}
             results = self.booster.boost(graph, results)
             
+            # Merge activations
+            for n, s in results.items():
+                cumulative_activations[n] = max(cumulative_activations.get(n, 0), s)
+
             # 2. Adversarial Critique
+            yield {"type": "status", "message": f"Step {step + 1}: Adversarial Review (MAST)..."}
             top_evidence = [graph.nodes[n].get("label", str(n)) for n in list(results.keys())[:5]]
             passed, critique, failures = await self.reviewer.critique_hypothesis(current_query, top_evidence)
             
@@ -136,10 +153,19 @@ class NeuroSymbolicLoop:
                 "detected_failures": [f.value for f in failures]
             })
 
-            if not passed:
-                # Recovery: Refine query based on critique
+            if not passed and step < max_steps - 1:
                 current_query = f"Verify {current_query} considering {critique}"
             else:
-                break # Sufficient evidence
+                break
 
-        return {"results": results, "trace": trace}
+        yield {
+            "type": "result",
+            "data": {"activations": cumulative_activations, "trace": trace},
+        }
+
+    async def run_deep_think(self, graph: nx.DiGraph, initial_query: str, max_steps: int = 3) -> Dict[str, Any]:
+        result = None
+        async for event in self.run_deep_think_stream(graph, initial_query, max_steps):
+            if event["type"] == "result":
+                result = event["data"]
+        return result or {"activations": {}, "trace": []}

@@ -350,12 +350,12 @@ export default function Home() {
 
   const handleEvolution = useCallback(async () => {
     setEvolutionLoading(true);
-    setViewMode("graph"); // Temporarily using graph as container or add new mode
+    setHasSearched(true); // Ensure sidebar/etc shows
     try {
       const res = await fetch(`${API_URL}/evolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: query }),
+        body: JSON.stringify({ text: query, max_iterations: 3 }),
       });
       if (res.ok) {
         const data = await res.json();
