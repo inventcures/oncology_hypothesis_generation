@@ -192,40 +192,90 @@ export type DeepResearchData = {
   query: string;
 };
 
-// --- Validation ---
+// --- MAST & Reliability ---
 
-export interface ValidationCheck {
-  status: "pass" | "caution" | "fail" | "unknown";
-  score: number;
-  title: string;
-  subtitle?: string;
-  summary: string;
-  metric?: {
-    name: string;
-    value: number | string;
-    interpretation: string;
-  };
-  details?: Record<string, unknown>;
+export enum MASTFailureMode {
+  DISOBEY_TASK = "FM-1.1",
+  DISOBEY_ROLE = "FM-1.2",
+  STEP_REPETITION = "FM-1.3",
+  CONTEXT_LOSS = "FM-1.4",
+  CLARIFICATION_FAIL = "FM-2.2",
+  INFO_WITHHOLDING = "FM-2.4",
+  INCORRECT_VERIFICATION = "FM-3.3",
 }
 
-export interface ValidationData {
-  gene: string;
+export type MASTReport = {
+  detected_failures: MASTFailureMode[];
+  critique: string;
+  recovery_suggestion?: string;
+  agent_trace: any[];
+};
+
+// --- ADRS Evolution ---
+
+export type HypothesisObject = {
+  id: string;
+  target_gene: string;
   disease: string;
+  mutation?: string;
+  mechanism: string;
+  rationale: string;
+  evidence_score: number;
+  iteration: number;
+  parent_id?: string;
+  refinement_reason?: string;
+};
+
+export type EvolutionHistoryItem = {
+  hypothesis: HypothesisObject;
+  scorecard: ValidationScorecard;
+};
+
+export type EvolutionResponse = {
+  query: string;
+  iterations: number;
+  final_status: string;
+  history: EvolutionHistoryItem[];
+};
+
+// --- Validation ---
+
+export enum FidelityLevel {
+  L1_PLAUSIBILITY = 1,
+  L2_TECHNICAL_FIT = 2,
+  L3_BIOLOGICAL_FIT = 3,
+  L4_CLINICAL_FIT = 4,
+}
+
+export interface ValidationMetric {
+  name: string;
+  value: any;
+  interpretation: string;
+  fidelity: FidelityLevel;
+}
+
+export interface ValidationCheck {
+  title: string;
+  status: "pass" | "caution" | "fail" | "unknown";
+  score: number;
+  summary: string;
+  metrics: ValidationMetric[];
+  details: Record<string, any>;
+}
+
+export interface ValidationScorecard {
+  hypothesis_id: string;
   overall_score: number;
   overall_status: string;
-  checks: {
-    essentiality: ValidationCheck;
-    survival: ValidationCheck;
-    toxicity: ValidationCheck;
-    drugability: ValidationCheck;
-    biomarker: ValidationCheck;
-    competition: ValidationCheck;
-  };
-  synthesis: {
-    text: string;
-    generated_by: string;
-    exportable: boolean;
-  };
+  fidelity_reached: FidelityLevel;
+  checks: Record<string, ValidationCheck>;
+  synthesis: string;
+  evidence_links: string[];
+}
+
+export interface ValidationData extends ValidationScorecard {
+  gene: string;
+  disease: string;
 }
 
 // --- Clinical Trials ---

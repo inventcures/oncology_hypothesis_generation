@@ -45,6 +45,13 @@ from .validation import ValidationAgent
 from .orchestrator import AgentOrchestrator
 from .entity_extraction import get_extractor
 from .clinical_trials import ClinicalTrialsClient
+from .schemas import (
+    HypothesisObject, 
+    ValidationScorecard, 
+    MASTReport, 
+    ValidationStatus,
+    FidelityLevel
+)
 
 import httpx
 import os
@@ -1413,6 +1420,29 @@ async def generate_stream(query: Query):
         },
     )
 
+
+@app.post("/evolve", dependencies=[Depends(verify_api_key)])
+async def evolve_hypothesis(query: Query, max_iterations: int = 3):
+    """
+    Full ADRS Discovery Loop: Generate -> Evaluate -> Refine.
+    Incorporates MAST monitoring at each step.
+    """
+    history = await orchestrator.run_evolution_loop(query.text, max_iterations)
+    
+    # Format for response
+    evolution_history = []
+    for hypothesis, scorecard in history:
+        evolution_history.append({
+            "hypothesis": hypothesis.model_dump(),
+            "scorecard": scorecard.model_dump()
+        })
+        
+    return {
+        "query": query.text,
+        "iterations": len(history),
+        "final_status": history[-1][1].overall_status,
+        "history": evolution_history
+    }
 
 @app.get("/health")
 def health_check():

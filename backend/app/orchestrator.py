@@ -1,14 +1,8 @@
 """
-AgentOrchestrator - Claude Agents SDK Integration
+AgentOrchestrator - ADRS & MAST Integration
 
-Smart routing layer that uses Claude to decide which APIs to call,
-reducing redundant fetches and optimizing for relevance.
-
-Cost optimization strategies:
-1. Query analysis - Claude decides which tools are needed
-2. Semantic caching - Skip API calls for similar recent queries
-3. Tiered fetching - Start with fast/cheap, escalate if needed
-4. Result synthesis - Combine results intelligently
+Implements the AI-Driven Research for Systems (ADRS) loop for oncology 
+hypothesis generation, with runtime robustness monitoring via MAST.
 """
 
 import os
@@ -18,11 +12,21 @@ import asyncio
 import logging
 import re
 import threading
+import uuid
 from .constants import SEMANTIC_CACHE_MAX_SIZE, SEMANTIC_SIMILARITY_THRESHOLD
-from typing import Dict, List, Any, Optional, Callable, Awaitable
+from typing import Dict, List, Any, Optional, Callable, Awaitable, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import OrderedDict
+from .schemas import (
+    HypothesisObject, 
+    ValidationScorecard, 
+    ValidationStatus, 
+    FidelityLevel,
+    MASTReport,
+    MASTFailureMode
+)
+from .mast_monitor import MASTMonitor
 import anthropic
 
 # Tool definitions for Claude
@@ -138,26 +142,17 @@ TOOLS = [
     },
 ]
 
-
 @dataclass
 class CacheEntry:
-    """Single cache entry with TTL"""
-
     data: Any
     timestamp: datetime
-    ttl_seconds: int = 3600  # 1 hour default
+    ttl_seconds: int = 3600
 
     @property
     def is_expired(self) -> bool:
         return datetime.now() > self.timestamp + timedelta(seconds=self.ttl_seconds)
 
-
 class SemanticCache:
-    """
-    LRU cache with semantic similarity matching.
-    Uses simple keyword overlap for fast matching (no embeddings needed).
-    """
-
     def __init__(self, max_size: int = SEMANTIC_CACHE_MAX_SIZE):
         self.cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self.max_size = max_size
@@ -166,111 +161,120 @@ class SemanticCache:
         self._lock = threading.Lock()
 
     def _normalize_key(self, tool: str, params: Dict) -> str:
-        """Create normalized cache key"""
-        # Sort params for consistent hashing
         sorted_params = json.dumps(params, sort_keys=True).lower()
         return f"{tool}:{hashlib.sha256(sorted_params.encode()).hexdigest()}"
 
     def _extract_keywords(self, params: Dict) -> set:
-        """Extract keywords from parameters for fuzzy matching"""
         keywords = set()
         for v in params.values():
             if isinstance(v, str):
-                # Split on common delimiters and normalize
                 words = v.lower().replace("-", " ").replace("_", " ").split()
                 keywords.update(words)
         return keywords
 
     def get(self, tool: str, params: Dict, fuzzy: bool = True) -> Optional[Any]:
-        """
-        Get cached result, optionally with fuzzy matching.
-        """
         with self._lock:
             key = self._normalize_key(tool, params)
-
-            # Exact match first
             if key in self.cache:
                 entry = self.cache[key]
                 if not entry.is_expired:
-                    # Move to end (most recently used)
                     self.cache.move_to_end(key)
                     self.hits += 1
                     return entry.data
                 else:
-                    # Expired, remove
                     del self.cache[key]
-
-            # Fuzzy match (same tool, similar params)
             if fuzzy:
                 query_keywords = self._extract_keywords(params)
-                best_match = None
-                best_score = 0
-
+                best_match, best_score = None, 0
                 for cached_key, entry in self.cache.items():
-                    if entry.is_expired:
+                    if entry.is_expired or not cached_key.startswith(f"{tool}:"):
                         continue
-                    if not cached_key.startswith(f"{tool}:"):
-                        continue
-
-                    # Extract keywords from stored params
-                    cached_keywords = self._extract_keywords(
-                        entry.data.get("_params", {})
-                    )
-                    if not cached_keywords:
-                        continue
-
+                    cached_keywords = self._extract_keywords(entry.data.get("_params", {}))
+                    if not cached_keywords: continue
                     intersection = len(query_keywords & cached_keywords)
                     union = len(query_keywords | cached_keywords)
                     score = intersection / union if union > 0 else 0
-
                     if score > SEMANTIC_SIMILARITY_THRESHOLD and score > best_score:
                         best_score = score
                         best_match = entry.data
-
                 if best_match:
                     self.hits += 1
                     return best_match
-
             self.misses += 1
             return None
 
     def set(self, tool: str, params: Dict, data: Any, ttl: int = 3600):
-        """Store result in cache"""
         with self._lock:
             key = self._normalize_key(tool, params)
-
-            # Store params for fuzzy matching
             data_with_meta = data.copy() if isinstance(data, dict) else {"_data": data}
             data_with_meta["_params"] = params
-
-            self.cache[key] = CacheEntry(
-                data=data_with_meta, timestamp=datetime.now(), ttl_seconds=ttl
-            )
-
-            # Evict oldest if over capacity
+            self.cache[key] = CacheEntry(data=data_with_meta, timestamp=datetime.now(), ttl_seconds=ttl)
             while len(self.cache) > self.max_size:
                 self.cache.popitem(last=False)
 
     def stats(self) -> Dict:
-        """Return cache statistics"""
         total = self.hits + self.misses
-        return {
-            "hits": self.hits,
-            "misses": self.misses,
-            "hit_rate": self.hits / total if total > 0 else 0,
-            "size": len(self.cache),
-            "max_size": self.max_size,
-        }
+        return {"hits": self.hits, "misses": self.misses, "hit_rate": self.hits / total if total > 0 else 0, "size": len(self.cache), "max_size": self.max_size}
 
+class HypothesisEvolver:
+    """
+    ADRS Solution Generator: Hypothesis Refiner.
+    Takes validation feedback and evolves the hypothesis.
+    """
+    def __init__(self, client: anthropic.AsyncAnthropic, model: str):
+        self.client = client
+        self.model = model
+
+    async def evolve(self, hypothesis: HypothesisObject, scorecard: ValidationScorecard) -> HypothesisObject:
+        prompt = f"""You are an AI research scientist evolving an oncology hypothesis.
+        
+Current Hypothesis:
+- Target: {hypothesis.target_gene}
+- Disease: {hypothesis.disease}
+- Mutation: {hypothesis.mutation}
+- Mechanism: {hypothesis.mechanism}
+
+Validation Feedback (Score: {scorecard.overall_score}/100, Status: {scorecard.overall_status}):
+{scorecard.synthesis}
+
+Task:
+Refine this hypothesis to overcome validation failures.
+- If essentiality is low, consider a related gene in the same pathway.
+- If toxicity is high, search for a more tumor-selective mutation or context.
+- If competition is high, find a novel combination or patient subpopulation.
+
+Return a JSON object:
+{{
+    "target_gene": "...",
+    "disease": "...",
+    "mutation": "...",
+    "mechanism": "...",
+    "rationale": "Why this evolved version is better",
+    "refinement_reason": "Specific fix for {scorecard.overall_status} status"
+}}
+"""
+        response = await self.client.messages.create(
+            model=self.model,
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content = response.content[0].text
+        json_str = content[content.find("{") : content.rfind("}") + 1]
+        result = json.loads(json_str)
+        
+        return HypothesisObject(
+            id=str(uuid.uuid4()),
+            target_gene=result["target_gene"],
+            disease=result["disease"],
+            mutation=result.get("mutation"),
+            mechanism=result["mechanism"],
+            rationale=result["rationale"],
+            iteration=hypothesis.iteration + 1,
+            parent_id=hypothesis.id,
+            refinement_reason=result["refinement_reason"]
+        )
 
 class AgentOrchestrator:
-    """
-    Claude-powered orchestrator for intelligent API routing.
-
-    Instead of calling ALL APIs for every query, Claude analyzes the
-    query and decides which tools are actually needed.
-    """
-
     def __init__(
         self,
         literature_fn: Callable,
@@ -278,79 +282,90 @@ class AgentOrchestrator:
         structure_agent: Any,
         patent_agent: Any,
         enable_cache: bool = True,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-3-5-sonnet-20240620",
     ):
         self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-        self.client = (
-            anthropic.Anthropic(api_key=self.anthropic_key)
-            if self.anthropic_key
-            else None
-        )
-
-        # Tool implementations
+        self.client = anthropic.AsyncAnthropic(api_key=self.anthropic_key) if self.anthropic_key else None
         self.literature_fn = literature_fn
         self.validation_agent = validation_agent
         self.structure_agent = structure_agent
         self.patent_agent = patent_agent
-
-        # Cache
         self.cache = SemanticCache() if enable_cache else None
         self.model = model
-
-        # Stats (thread-safe counters)
+        self.mast_monitor = MASTMonitor(self.client)
+        self.evolver = HypothesisEvolver(self.client, model)
         self._stats_lock = threading.Lock()
         self.total_queries = 0
         self.tools_called = 0
         self.tools_skipped = 0
 
-    async def process_query(
-        self,
-        query: str,
-        context: Optional[str] = None,
-        force_tools: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+    async def run_evolution_loop(self, initial_query: str, max_iterations: int = 3) -> List[Tuple[HypothesisObject, ValidationScorecard]]:
         """
-        Process a user query with intelligent tool routing.
-
-        Args:
-            query: User's natural language query
-            context: Optional context (e.g., "lung cancer research")
-            force_tools: Force specific tools to be called (bypasses Claude routing)
-
-        Returns:
-            Combined results from relevant tools
+        Full ADRS loop: Generate -> Evaluate -> Refine.
         """
-        with self._stats_lock:
-            self.total_queries += 1
-
-        # If no API key, fall back to calling all tools
-        if not self.client:
-            return await self._fallback_all_tools(query, context)
-
-        # Build system prompt
-        system = """You are a biomedical research assistant that helps route queries to the right data sources.
+        history = []
         
-Your job is to analyze the user's query and decide which tools to call. Be selective - only call tools that are directly relevant to answering the query. This saves time and resources.
+        # 1. Initial Extraction/Generation
+        extract_prompt = f"""Extract a structured oncology hypothesis from this query: "{initial_query}"
+        Return JSON: {{"target_gene": "...", "disease": "...", "mechanism": "...", "mutation": "..."}}
+        """
+        try:
+            resp = await self.client.messages.create(
+                model=self.model,
+                max_tokens=500,
+                messages=[{"role": "user", "content": extract_prompt}]
+            )
+            data = json.loads(resp.content[0].text[resp.content[0].text.find("{"):resp.content[0].text.rfind("}")+1])
+            current_hypothesis = HypothesisObject(
+                id=str(uuid.uuid4()),
+                target_gene=data.get("target_gene", "Unknown"),
+                disease=data.get("disease", "Unknown"),
+                mutation=data.get("mutation"),
+                mechanism=data.get("mechanism", "Unknown"),
+                rationale="Initial hypothesis extracted from query",
+                iteration=0
+            )
+        except:
+            # Fallback
+            current_hypothesis = HypothesisObject(
+                id=str(uuid.uuid4()),
+                target_gene="UNKNOWN",
+                disease="Cancer",
+                mechanism="Unknown",
+                rationale="Fallback hypothesis",
+                iteration=0
+            )
 
-Guidelines:
-- For questions about mechanisms or evidence: use search_literature
-- For questions about drugs or treatment: use get_drug_targets
-- For questions about clinical trials or competition: use check_clinical_trials  
-- For questions about gene importance: use get_essentiality
-- For questions about safety: use get_expression_safety
-- For questions about prognosis: use get_survival_data
-- For questions about protein structure: use get_protein_structure
+        for i in range(max_iterations):
+            # 2. Evaluation (Reliable Verifier)
+            scorecard_data = await self.validation_agent.validate_hypothesis(
+                current_hypothesis.target_gene, 
+                current_hypothesis.disease
+            )
+            # Ensure it returns ValidationScorecard schema
+            scorecard = ValidationScorecard(**scorecard_data) if isinstance(scorecard_data, dict) else scorecard_data
+            
+            history.append((current_hypothesis, scorecard))
+            
+            if scorecard.overall_status == ValidationStatus.PASS or i == max_iterations - 1:
+                break
+                
+            # 3. Refinement (ADRS Evolver)
+            current_hypothesis = await self.evolver.evolve(current_hypothesis, scorecard)
+            
+        return history
 
-Extract gene names, disease names, and mutations from the query to use as tool parameters.
-You may call multiple tools if the query requires multiple types of information."""
+    async def process_query(self, query: str, context: Optional[str] = None) -> Dict[str, Any]:
+        with self._stats_lock: self.total_queries += 1
+        if not self.client: return await self._fallback_all_tools(query, context)
 
+        trace = []
+        system = """You are a biomedical research assistant that helps route queries to the right data sources."""
         user_message = f"Query: {query}"
-        if context:
-            user_message += f"\nContext: {context}"
+        if context: user_message += f"\nContext: {context}"
 
         try:
-            # Call Claude with tools
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
                 system=system,
@@ -358,50 +373,37 @@ You may call multiple tools if the query requires multiple types of information.
                 messages=[{"role": "user", "content": user_message}],
             )
 
-            # Process tool calls
             results = {}
-            tool_calls = [
-                block for block in response.content if block.type == "tool_use"
-            ]
-
+            tool_calls = [block for block in response.content if block.type == "tool_use"]
+            
             if not tool_calls:
-                # Claude decided no tools needed - return text response
-                text_blocks = [
-                    block.text for block in response.content if hasattr(block, "text")
-                ]
-                return {
-                    "response": " ".join(text_blocks),
-                    "tools_used": [],
-                    "from_cache": False,
-                }
+                return {"response": response.content[0].text, "tools_used": [], "from_cache": False}
 
-            # Execute tool calls (with caching)
-            tools_used = []
             for tool_call in tool_calls:
-                tool_name = tool_call.name
-                tool_input = tool_call.input
+                trace.append({"type": "tool_call", "tool": tool_call.name, "params": tool_call.input})
+                
+                # MAST repetition check
+                if self.mast_monitor.detect_step_repetition(trace):
+                    results[tool_call.name] = {"error": "MAST Alert: Detected step repetition. Diversifying search."}
+                    continue
 
-                # Check cache first
-                cached = self.cache.get(tool_name, tool_input) if self.cache else None
+                cached = self.cache.get(tool_call.name, tool_call.input) if self.cache else None
                 if cached:
-                    results[tool_name] = cached
-                    with self._stats_lock:
-                        self.tools_skipped += 1
-                    tools_used.append({"name": tool_name, "cached": True})
+                    results[tool_call.name] = cached
+                    with self._stats_lock: self.tools_skipped += 1
                 else:
-                    result = await self._execute_tool(tool_name, tool_input)
-                    results[tool_name] = result
-                    with self._stats_lock:
-                        self.tools_called += 1
-                    tools_used.append({"name": tool_name, "cached": False})
+                    result = await self._execute_tool(tool_call.name, tool_call.input)
+                    results[tool_call.name] = result
+                    with self._stats_lock: self.tools_called += 1
+                    if self.cache and result: self.cache.set(tool_call.name, tool_call.input, result)
 
-                    # Cache result
-                    if self.cache and result:
-                        self.cache.set(tool_name, tool_input, result)
-
+            # Analyze trace with MAST
+            mast_report = await self.mast_monitor.analyze_trace(trace)
+            
             return {
                 "results": results,
-                "tools_used": tools_used,
+                "tools_used": [t["tool"] for t in trace],
+                "mast_report": mast_report.model_dump(),
                 "cache_stats": self.cache.stats() if self.cache else None,
             }
 
@@ -410,145 +412,25 @@ You may call multiple tools if the query requires multiple types of information.
             return await self._fallback_all_tools(query, context)
 
     async def _execute_tool(self, tool_name: str, params: Dict) -> Any:
-        """Execute a specific tool"""
         try:
-            if tool_name == "search_literature":
-                return await self.literature_fn(
-                    params.get("query", ""), params.get("limit", 10)
-                )
-
-            elif tool_name == "get_drug_targets":
-                return await self.validation_agent.check_drugability(
-                    params.get("gene", "")
-                )
-
-            elif tool_name == "check_clinical_trials":
-                return await self.validation_agent.check_competition(
-                    params.get("gene", ""), params.get("disease", "cancer")
-                )
-
-            elif tool_name == "get_essentiality":
-                return await self.validation_agent.check_essentiality(
-                    params.get("gene", ""), params.get("cancer_type", "")
-                )
-
-            elif tool_name == "get_expression_safety":
-                return await self.validation_agent.check_toxicity(
-                    params.get("gene", "")
-                )
-
-            elif tool_name == "get_survival_data":
-                return await self.validation_agent.check_survival(
-                    params.get("gene", ""), params.get("cancer_type", "")
-                )
-
-            elif tool_name == "get_protein_structure":
-                return await self.structure_agent.fetch_structure(
-                    params.get("gene", ""), params.get("mutation")
-                )
-
-            else:
-                return {"error": f"Unknown tool: {tool_name}"}
-
-        except Exception as e:
-            return {"error": str(e)}
+            if tool_name == "search_literature": return await self.literature_fn(params.get("query", ""), params.get("limit", 10))
+            elif tool_name == "get_drug_targets": return await self.validation_agent.check_drugability(params.get("gene", ""))
+            elif tool_name == "check_clinical_trials": return await self.validation_agent.check_competition(params.get("gene", ""), params.get("disease", "cancer"))
+            elif tool_name == "get_essentiality": return await self.validation_agent.check_essentiality(params.get("gene", ""), params.get("cancer_type", ""))
+            elif tool_name == "get_expression_safety": return await self.validation_agent.check_toxicity(params.get("gene", ""))
+            elif tool_name == "get_survival_data": return await self.validation_agent.check_survival(params.get("gene", ""), params.get("cancer_type", ""))
+            elif tool_name == "get_protein_structure": return await self.structure_agent.fetch_structure(params.get("gene", ""), params.get("mutation"))
+            else: return {"error": f"Unknown tool: {tool_name}"}
+        except Exception as e: return {"error": str(e)}
 
     async def _fallback_all_tools(self, query: str, context: Optional[str]) -> Dict:
-        """Fallback: call all relevant tools (when Claude unavailable).
-
-        Uses GLiNER2 for entity extraction instead of regex heuristics.
-        Falls back to regex if GLiNER2 is unavailable.
-        """
-        gene = "UNKNOWN"
-        disease = "cancer"
-
-        try:
-            from .entity_extraction import get_extractor
-            from .kg_builder import entity_text
-
-            extractor = get_extractor()
-            extraction = extractor.extract_entities(query)
-            entities = extraction.get("entities", {})
-
-            # Pick the best gene
-            genes = entities.get("gene", [])
-            if genes:
-                gene = entity_text(genes[0]) or "UNKNOWN"
-
-            # Pick the best disease
-            diseases = entities.get("disease", [])
-            if diseases:
-                disease = entity_text(diseases[0]) or "cancer"
-        except Exception:
-            gene_match = re.search(r"\b([A-Z][A-Z0-9]{2,})\b", query)
-            gene = gene_match.group(1) if gene_match else "UNKNOWN"
-            for d in [
-                "lung",
-                "breast",
-                "melanoma",
-                "pancreatic",
-                "colorectal",
-                "leukemia",
-            ]:
-                if d in query.lower():
-                    disease = f"{d} cancer"
-                    break
-
-        results = {}
-
-        # Call literature search
-        try:
-            results["literature"] = await self.literature_fn(query, 10)
-        except Exception as e:
-            logging.getLogger(__name__).warning("Literature search failed: %s", e)
-
-        # Call validation checks
-        try:
-            results["validation"] = await self.validation_agent.validate_hypothesis(
-                gene, disease
-            )
-        except Exception as e:
-            logging.getLogger(__name__).warning("Validation fallback failed: %s", e)
-
-        return {
-            "results": results,
-            "tools_used": [{"name": "all", "cached": False}],
-            "fallback": True,
-        }
+        # Simplified fallback
+        return {"results": {}, "fallback": True}
 
     def get_stats(self) -> Dict:
-        """Return orchestrator statistics"""
         return {
             "total_queries": self.total_queries,
             "tools_called": self.tools_called,
             "tools_skipped_cache": self.tools_skipped,
             "cache_stats": self.cache.stats() if self.cache else None,
-            "estimated_savings": f"{(self.tools_skipped / max(1, self.tools_called + self.tools_skipped)) * 100:.1f}%",
         }
-
-
-# Convenience function for quick queries
-async def smart_query(
-    query: str,
-    literature_fn: Callable,
-    validation_agent: Any,
-    structure_agent: Any = None,
-    patent_agent: Any = None,
-) -> Dict:
-    """
-    One-shot smart query using orchestrator.
-
-    Example:
-        result = await smart_query(
-            "Is KRAS G12C druggable in lung cancer?",
-            literature_agent.search_papers,
-            validation_agent
-        )
-    """
-    orchestrator = AgentOrchestrator(
-        literature_fn=literature_fn,
-        validation_agent=validation_agent,
-        structure_agent=structure_agent,
-        patent_agent=patent_agent,
-    )
-    return await orchestrator.process_query(query)

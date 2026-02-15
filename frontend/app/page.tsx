@@ -256,49 +256,117 @@ type DeepResearchData = {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://backend-production-baa6.up.railway.app";
 
+// --- ADRS Evolution View ---
+function ADRSEvolutionView({ data, loading }: { data: EvolutionResponse | null; loading: boolean }) {
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center h-64">
+      <Loader2 className="animate-spin text-blue-500 mb-4" size={32} />
+      <p className="text-slate-600 font-medium italic">Evolving oncology hypothesis through reliable verifiers...</p>
+    </div>
+  );
+
+  if (!data) return null;
+
+  return (
+    <div className="space-y-8 p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-slate-800">Hypothesis Evolution Trace</h2>
+        <div className="flex gap-2">
+          <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold uppercase tracking-widest">
+            {data.iterations} Iterations
+          </span>
+          <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest ${
+            data.final_status === 'pass' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+          }`}>
+            Final: {data.final_status}
+          </span>
+        </div>
+      </div>
+
+      <div className="relative">
+        <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-slate-200 z-0"></div>
+        <div className="space-y-12">
+          {data.history.map((item, idx) => (
+            <div key={idx} className="relative pl-12 z-10">
+              <div className="absolute left-0 w-8 h-8 rounded-full bg-white border-2 border-blue-500 flex items-center justify-center font-bold text-blue-600 shadow-sm">
+                {idx}
+              </div>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden hover:border-blue-300 transition-colors">
+                <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                  <h3 className="font-bold text-slate-800">Generation {idx}</h3>
+                  {item.hypothesis.refinement_reason && (
+                    <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-md font-mono">
+                      Refined: {item.hypothesis.refinement_reason}
+                    </span>
+                  )}
+                </div>
+                <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Target size={14} className="text-blue-500" />
+                      <span className="text-sm font-bold">{item.hypothesis.target_gene}</span>
+                      <span className="text-slate-400 text-xs">in</span>
+                      <span className="text-sm font-medium">{item.hypothesis.disease}</span>
+                    </div>
+                    <p className="text-xs text-slate-600 italic leading-relaxed">
+                      "{item.hypothesis.rationale}"
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Validation Scorecard</span>
+                      <span className={`text-xs font-bold ${
+                        item.scorecard.overall_status === 'pass' ? 'text-emerald-600' : 'text-amber-600'
+                      }`}>
+                        {item.scorecard.overall_score}/100
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${
+                        item.scorecard.overall_status === 'pass' ? 'bg-emerald-500' : 'bg-amber-500'
+                      }`} style={{ width: `${item.scorecard.overall_score}%` }}></div>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-2 line-clamp-2">
+                      {item.scorecard.synthesis}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [query, setQuery] = useState("");
-  const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
-  const [papers, setPapers] = useState<Paper[]>([]);
-  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphLink[]; stats?: GraphStats; legend?: GraphLegendItem[] } | null>(null);
-  const [hoveredEdge, setHoveredEdge] = useState<number | null>(null);
-  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [status, setStatus] = useState("Idle");
-  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials" | "pathway" | "dossier" | "indications" | "whatif" | "competitive">("graph");
-  const [drData, setDrData] = useState<DeepResearchData | null>(null);
-  const [drLoading, setDrLoading] = useState(false);
-  const [validationData, setValidationData] = useState<any>(null);
-  const [validationLoading, setValidationLoading] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  const [drError, setDrError] = useState<string | null>(null);
-  const [validationQuery, setValidationQuery] = useState<string>("");
-  const [trialsData, setTrialsData] = useState<any>(null);
-  const [trialsLoading, setTrialsLoading] = useState(false);
-  const [trialsQuery, setTrialsQuery] = useState("");
-  // Error states for user-facing error messages
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const [trialsError, setTrialsError] = useState<string | null>(null);
-  // Query history (localStorage-backed)
-  const [queryHistory, setQueryHistory] = useState<{text: string; time: number}[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  // Interactive graph toggle
-  const [useInteractiveGraph, setUseInteractiveGraph] = useState(true);
-  // Dossier state
-  const [dossierData, setDossierData] = useState<any>(null);
-  const [dossierLoading, setDossierLoading] = useState(false);
-  // Indication expansion state
-  const [indicationData, setIndicationData] = useState<any>(null);
-  const [indicationLoading, setIndicationLoading] = useState(false);
-  // What-If simulator state
-  const [whatIfResult, setWhatIfResult] = useState<any>(null);
-  const [whatIfLoading, setWhatIfLoading] = useState(false);
-  // Pipeline progress state
-  const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
-  const [progress, setProgress] = useState(0);
-  const [pipelineStartTime, setPipelineStartTime] = useState<number | null>(null);
+  // ... existing states ...
+  const [evolutionData, setEvolutionData] = useState<EvolutionResponse | null>(null);
+  const [evolutionLoading, setEvolutionLoading] = useState(false);
+  const [mastReport, setMastReport] = useState<MASTReport | null>(null);
+
+  const handleEvolution = useCallback(async () => {
+    setEvolutionLoading(true);
+    setViewMode("graph"); // Temporarily using graph as container or add new mode
+    try {
+      const res = await fetch(`${API_URL}/evolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: query }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEvolutionData(data);
+        setViewMode("metrics"); // Redirect to a view that shows trace
+      }
+    } catch (e) {
+      console.error("Evolution failed:", e);
+    } finally {
+      setEvolutionLoading(false);
+    }
+  }, [query]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -704,6 +772,7 @@ export default function Home() {
                       setHypotheses(event.data.hypotheses || []);
                       setGraphData(event.data.graph_context);
                       setPapers(event.data.papers || []);
+                      if (event.data.mast_report) setMastReport(event.data.mast_report);
                       setStatus("Complete");
                     }
                     break;
@@ -943,6 +1012,15 @@ export default function Home() {
                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                   Live Feed
                 </h3>
+                {!loading && hasSearched && (
+                  <button 
+                    onClick={handleEvolution}
+                    className="flex items-center gap-1.5 px-2 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                  >
+                    <RefreshCw size={10} className={evolutionLoading ? 'animate-spin' : ''} />
+                    EVOLVE
+                  </button>
+                )}
             </div>
 
             {loading && (
@@ -972,6 +1050,23 @@ export default function Home() {
                       Try Again
                     </button>
                  </div>
+            )}
+
+            {mastReport && mastReport.detected_failures.length > 0 && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <div className="flex items-center gap-2 text-amber-700 font-bold text-[10px] uppercase mb-1">
+                  <AlertTriangle size={12} />
+                  System Reliability Alert (MAST)
+                </div>
+                <p className="text-[10px] text-amber-800 leading-tight">
+                  {mastReport.critique}
+                </p>
+                {mastReport.recovery_suggestion && (
+                  <p className="text-[10px] text-blue-700 mt-1 font-medium italic">
+                    Tip: {mastReport.recovery_suggestion}
+                  </p>
+                )}
+              </div>
             )}
 
             <div className="space-y-4">
@@ -1066,7 +1161,7 @@ export default function Home() {
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "metrics" ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                     <BarChart3 size={16} />
-                    <span>Metrics</span>
+                    <span>Evolution</span>
                 </button>
                 <button 
                     onClick={() => setViewMode("papers")}
@@ -1520,76 +1615,7 @@ export default function Home() {
 
                         {viewMode === "metrics" && (
                             <div className="w-full h-full pt-6 px-8 pb-8 overflow-auto">
-                                <div className="max-w-4xl w-full mb-8 text-center">
-                                    <h3 className="text-2xl font-bold text-slate-800 mb-2">Hypothesis Evaluation Metrics</h3>
-                                    <p className="text-slate-500">
-                                        Comparison of generated hypotheses based on two key metrics: 
-                                        <strong> Confidence</strong> (Probability of biological validity based on known evidence) and 
-                                        <strong> Novelty</strong> (Degree of un-exploration in current literature).
-                                    </p>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-8 w-full max-w-5xl">
-                                    {/* Confidence Card */}
-                                    <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
-                                        <div className="absolute top-0 right-0 p-4 opacity-5">
-                                            <ShieldCheck size={120} />
-                                        </div>
-                                        <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
-                                            <ShieldCheck className="text-blue-500" size={20} />
-                                            Biological Confidence
-                                        </h3>
-                                        <p className="text-xs text-slate-400 mb-6">
-                                            How strongly is this supported by existing knowledge graphs (OpenTargets) and expression data?
-                                        </p>
-                                        <div className="space-y-6">
-                                            {hypotheses.map(h => (
-                                                <div key={h.id}>
-                                                    <div className="flex justify-between text-sm mb-2 font-medium">
-                                                        <span className="text-slate-700 truncate pr-4">{h.title}</span>
-                                                        <span className="text-blue-600">{(h.confidence * 100).toFixed(0)}%</span>
-                                                    </div>
-                                                    <div className="h-3 bg-slate-100 rounded-full overflow-hidden relative">
-                                                        <div 
-                                                            className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full transition-all duration-1000" 
-                                                            style={{width: `${h.confidence * 100}%`}} 
-                                                        />
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    {/* Novelty Card */}
-                                    <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
-                                        <div className="absolute top-0 right-0 p-4 opacity-5">
-                                            <Sparkles size={120} />
-                                        </div>
-                                        <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
-                                            <Sparkles className="text-purple-500" size={20} />
-                                             Discovery Potential
-                                         </h3>
-                                         <p className="text-xs text-slate-400 mb-6">
-                                             How likely is this to lead to a new finding? High scores mean less explored territory.
-                                        </p>
-                                        <div className="space-y-6">
-                                            {hypotheses.map(h => (
-                                                <div key={h.id}>
-                                                    <div className="flex justify-between text-sm mb-2 font-medium">
-                                                        <span className="text-slate-700 truncate pr-4">{h.title}</span>
-                                                        <span className="text-purple-600">{(h.novelty_score * 100).toFixed(0)}%</span>
-                                                    </div>
-                                                    <div className="h-3 bg-slate-100 rounded-full overflow-hidden relative">
-                                                        <div 
-                                                            className="h-full bg-gradient-to-r from-purple-400 to-purple-600 rounded-full transition-all duration-1000" 
-                                                            style={{width: `${h.novelty_score * 100}%`}} 
-                                                        />
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
+                                <ADRSEvolutionView data={evolutionData} loading={evolutionLoading} />
                             </div>
                         )}
 
