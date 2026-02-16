@@ -888,6 +888,14 @@ export default function Home() {
           from { opacity: 0; transform: translate(-50%, 10px); }
           to { opacity: 1; transform: translate(-50%, 0); }
         }
+        @keyframes adrsPulse {
+          0% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+          70% { box-shadow: 0 0 0 10px rgba(139, 92, 246, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+        }
+        .adrs-active {
+          animation: adrsPulse 2s infinite;
+        }
       `}</style>
       {/* Header */}
       <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-200 shadow-sm z-20 sticky top-0">
@@ -955,10 +963,20 @@ export default function Home() {
                         />
                         <button 
                             onClick={() => handleSubmit()}
-                            disabled={!query}
+                            disabled={!query || loading}
+                            title="Standard Analysis"
                             className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <ArrowRight size={20} />
+                        </button>
+                        <button 
+                            onClick={() => handleEvolution()}
+                            disabled={!query || evolutionLoading}
+                            title="ADRS Evolution Loop (Deep Research)"
+                            className="ml-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-4 py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-bold text-sm shadow-lg shadow-purple-500/20"
+                        >
+                            {evolutionLoading ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />}
+                            EVOLVE
                         </button>
                     </div>
                 </div>
@@ -1058,9 +1076,10 @@ export default function Home() {
                 {!loading && hasSearched && (
                   <button 
                     onClick={handleEvolution}
-                    className="flex items-center gap-1.5 px-2 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                    disabled={evolutionLoading}
+                    className="flex items-center gap-1.5 px-2 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg text-[10px] font-black hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md shadow-purple-500/20"
                   >
-                    <RefreshCw size={10} className={evolutionLoading ? 'animate-spin' : ''} />
+                    {evolutionLoading ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
                     EVOLVE
                   </button>
                 )}
@@ -1167,13 +1186,21 @@ export default function Home() {
               ))}
               
               {hypotheses.length === 0 && !loading && (
-                <div className="text-center py-12">
+                <div className="text-center py-12 px-4">
                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Microscope className="text-slate-300" size={32} />
                    </div>
-                   <p className="text-sm text-slate-400">
+                   <p className="text-sm text-slate-400 mb-6">
                      Awaiting input to begin exploration.
                    </p>
+                   <button
+                    onClick={() => handleEvolution()}
+                    disabled={!query || evolutionLoading}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+                   >
+                     {evolutionLoading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                     RUN ADRS EVOLUTION
+                   </button>
                 </div>
               )}
             </div>
@@ -1201,10 +1228,17 @@ export default function Home() {
                 </button>
                 <button 
                     onClick={() => setViewMode("metrics")}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "metrics" ? "bg-blue-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "metrics" ? "bg-purple-50 text-purple-600 shadow-sm border border-purple-100" : "text-slate-500 hover:bg-slate-50"} ${evolutionLoading ? 'adrs-active' : ''}`}
                 >
-                    <BarChart3 size={16} />
+                    <div className="relative">
+                        <BarChart3 size={16} />
+                        <span className="absolute -top-2 -right-2 flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+                        </span>
+                    </div>
                     <span>Evolution</span>
+                    <span className="text-[8px] bg-purple-600 text-white px-1 rounded-sm font-bold ml-1">DEEP</span>
                 </button>
                 <button 
                     onClick={() => setViewMode("papers")}
