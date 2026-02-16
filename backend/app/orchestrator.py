@@ -281,6 +281,7 @@ class AgentOrchestrator:
         validation_agent: Any,
         structure_agent: Any,
         patent_agent: Any,
+        extractor: Any = None,
         enable_cache: bool = True,
         model: str = "claude-3-5-sonnet-20240620",
     ):
@@ -290,6 +291,7 @@ class AgentOrchestrator:
         self.validation_agent = validation_agent
         self.structure_agent = structure_agent
         self.patent_agent = patent_agent
+        self.extractor = extractor
         self.cache = SemanticCache() if enable_cache else None
         self.model = model
         self.mast_monitor = MASTMonitor(self.client)
@@ -305,36 +307,38 @@ class AgentOrchestrator:
         """
         history = []
         
-        # 1. Initial Extraction/Generation
-        extract_prompt = f"""Extract a structured oncology hypothesis from this query: "{initial_query}"
-        Return JSON: {{"target_gene": "...", "disease": "...", "mechanism": "...", "mutation": "..."}}
-        """
-        try:
-            resp = await self.client.messages.create(
-                model=self.model,
-                max_tokens=500,
-                messages=[{"role": "user", "content": extract_prompt}]
-            )
-            data = json.loads(resp.content[0].text[resp.content[0].text.find("{"):resp.content[0].text.rfind("}")+1])
-            current_hypothesis = HypothesisObject(
-                id=str(uuid.uuid4()),
-                target_gene=data.get("target_gene", "Unknown"),
-                disease=data.get("disease", "Unknown"),
-                mutation=data.get("mutation"),
-                mechanism=data.get("mechanism", "Unknown"),
-                rationale="Initial hypothesis extracted from query",
-                iteration=0
-            )
-        except:
-            # Fallback
-            current_hypothesis = HypothesisObject(
-                id=str(uuid.uuid4()),
-                target_gene="UNKNOWN",
-                disease="Cancer",
-                mechanism="Unknown",
-                rationale="Fallback hypothesis",
-                iteration=0
-            )
+        # 1. Initial Extraction using GLiNER2
+        target_gene = "Unknown"
+        disease = "Cancer"
+        mutation = None
+        mechanism = "Unknown"
+
+        if self.extractor:
+            try:
+                extraction = self.extractor.extract_entities(initial_query)
+                genes = extraction.get("entities", {}).get("gene", [])
+                if genes:
+                    target_gene = genes[0]["text"]
+                
+                diseases = extraction.get("entities", {}).get("disease", [])
+                if diseases:
+                    disease = diseases[0]["text"]
+                
+                mutations = extraction.get("entities", {}).get("mutation", [])
+                if mutations:
+                    mutation = mutations[0]["text"]
+            except Exception as e:
+                logging.getLogger(__name__).error("Evolution loop extraction failed: %s", e)
+
+        current_hypothesis = HypothesisObject(
+            id=str(uuid.uuid4()),
+            target_gene=target_gene,
+            disease=disease,
+            mutation=mutation,
+            mechanism=mechanism,
+            rationale="Initial hypothesis extracted from query",
+            iteration=0
+        )
 
         for i in range(max_iterations):
             # 2. Evaluation (Reliable Verifier)

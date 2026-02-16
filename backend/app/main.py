@@ -134,6 +134,7 @@ model_agent = ModelAgent(client=shared_client)
 protocol_agent = ProtocolAgent(client=shared_client)
 ct_client = ClinicalTrialsClient(client=shared_client)
 validation_agent = ValidationAgent(client=shared_client, ct_client=ct_client)
+entity_extractor = get_extractor()
 
 # Agent Orchestrator for smart routing (Claude Agents SDK)
 orchestrator = AgentOrchestrator(
@@ -141,6 +142,7 @@ orchestrator = AgentOrchestrator(
     validation_agent=validation_agent,
     structure_agent=structure_agent,
     patent_agent=patent_agent,
+    extractor=entity_extractor,
     enable_cache=True,
 )
 
