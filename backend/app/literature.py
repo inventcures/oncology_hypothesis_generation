@@ -168,10 +168,13 @@ class LiteratureAgent:
             abstract = p.get("abstract")
             if not abstract:
                 tldr = p.get("tldr")
-                if tldr and isinstance(tldr, dict):
-                    abstract = tldr.get("text", "No abstract available.")
+                if tldr and isinstance(tldr, dict) and tldr.get("text"):
+                    abstract = tldr.get("text")
                 else:
                     abstract = "No abstract available."
+            
+            if abstract is None:
+                abstract = "No abstract available."
 
             # Get PDF URL (prefer open access)
             pdf_info = p.get("openAccessPdf")
@@ -192,19 +195,19 @@ class LiteratureAgent:
 
             formatted.append(
                 {
-                    "id": p.get("paperId"),
-                    "title": p.get("title", "Unknown Title"),
+                    "id": p.get("paperId") or "",
+                    "title": p.get("title") or "Unknown Title",
                     "abstract": abstract,
                     "authors": ", ".join(authors) if authors else "Unknown",
                     "year": p.get("year"),
-                    "citations": p.get("citationCount", 0),
+                    "citations": p.get("citationCount") or 0,
                     "journal": p.get("venue") or "Preprint/Unknown",
                     "url": url,
                     "pdf_url": pdf_url,
                     "doi": doi,
                     "pmid": pmid,
-                    "fields": p.get("fieldsOfStudy", []),
-                    "publication_types": p.get("publicationTypes", []),
+                    "fields": p.get("fieldsOfStudy") or [],
+                    "publication_types": p.get("publicationTypes") or [],
                     "source": "Semantic Scholar",
                 }
             )

@@ -171,7 +171,7 @@ class GraphData(BaseModel):
 class Paper(BaseModel):
     id: Optional[str]
     title: str
-    abstract: str
+    abstract: Optional[str] = ""
     authors: str
     year: Optional[int]
     citations: int
