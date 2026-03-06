@@ -456,3 +456,302 @@ Return a JSON object (no markdown fencing):
     except Exception as e:
         logger.error("Meta-seed injection failed: %s", e)
         raise
+
+
+# ---------------------------------------------------------------------------
+# Bayesian belief from ValidationScorecard
+# ---------------------------------------------------------------------------
+
+FIDELITY_MAP: Dict[str, int] = {
+    "essentiality": 3,
+    "survival": 4,
+    "toxicity": 3,
+    "drugability": 2,
+    "competition": 4,
+}
+
+
+def belief_from_scorecard(
+    hypothesis_id: str, scorecard: ValidationScorecard
+) -> HypothesisBelief:
+    belief = HypothesisBelief(hypothesis_id=hypothesis_id)
+    for check_name, check in scorecard.checks.items():
+        score_01 = check.score / 100.0
+        fidelity = FIDELITY_MAP.get(check_name, 1)
+        belief.update(check_name, score_01, fidelity)
+    return belief
+
+
+# ---------------------------------------------------------------------------
+# AHEE Controller — main evolution engine
+# ---------------------------------------------------------------------------
+
+ISLAND_CONFIGS = [
+    ("gene-centric", "gene"),
+    ("disease-centric", "disease"),
+    ("mechanism-centric", "mechanism"),
+]
+
+DIMENSION_PREFERRED_OPS: Dict[str, List[MutationOperator]] = {
+    "gene": [MutationOperator.PIVOT_GENE, MutationOperator.COMBINATION],
+    "disease": [MutationOperator.PIVOT_DISEASE, MutationOperator.NARROW_POPULATION],
+    "mechanism": [MutationOperator.MECHANISM_SHIFT, MutationOperator.CROSS_POLLINATE],
+}
+
+
+class AHEEController:
+    def __init__(
+        self,
+        client: anthropic.AsyncAnthropic,
+        validation_agent: Any,
+        extractor: Any = None,
+        config: Optional[EvolutionConfig] = None,
+        model: str = "claude-sonnet-4-20250514",
+    ):
+        self.client = client
+        self.validation_agent = validation_agent
+        self.extractor = extractor
+        self.config = config or EvolutionConfig()
+        self.model = model
+        self.bank = HypothesisBank()
+        self.strategy_selector = AdaptiveStrategySelector(ucb_c=self.config.ucb_c)
+        self.beliefs: Dict[str, HypothesisBelief] = {}
+
+    def _current_alpha(self, generation: int) -> float:
+        cfg = self.config
+        progress = generation / max(cfg.max_generations - 1, 1)
+        return cfg.initial_alpha + (cfg.final_alpha - cfg.initial_alpha) * progress
+
+    def _extract_seed(self, query: str) -> Dict[str, str]:
+        target_gene = "Unknown"
+        disease = "Cancer"
+        mutation = None
+
+        if self.extractor:
+            try:
+                extraction = self.extractor.extract_entities(query)
+                genes = extraction.get("entities", {}).get("gene", [])
+                if genes:
+                    target_gene = genes[0]["text"]
+                diseases = extraction.get("entities", {}).get("disease", [])
+                if diseases:
+                    disease = diseases[0]["text"]
+                mutations = extraction.get("entities", {}).get("mutation", [])
+                if mutations:
+                    mutation = mutations[0]["text"]
+            except Exception as e:
+                logger.error("AHEE seed extraction failed: %s", e)
+
+        return {"target_gene": target_gene, "disease": disease, "mutation": mutation}
+
+    def _initialize_islands(self, seed: Dict[str, str], query: str) -> List[Island]:
+        islands = []
+        num = min(self.config.num_islands, len(ISLAND_CONFIGS))
+        for i in range(num):
+            name, dimension = ISLAND_CONFIGS[i]
+            h = HypothesisObject(
+                id=str(uuid.uuid4()),
+                target_gene=seed["target_gene"],
+                disease=seed["disease"],
+                mutation=seed.get("mutation"),
+                mechanism="Unknown",
+                rationale=f"Seed hypothesis from query: {query[:100]}",
+                iteration=0,
+                island=name,
+            )
+            island = Island(name=name, mutation_dimension=dimension, population=[h])
+            islands.append(island)
+            self.beliefs[h.id] = HypothesisBelief(hypothesis_id=h.id)
+        return islands
+
+    def _update_population(
+        self, island: Island, candidate: HypothesisObject, belief: HypothesisBelief
+    ) -> List[HypothesisObject]:
+        island.population.append(candidate)
+        if len(island.population) > self.config.population_size:
+            worst = min(
+                island.population,
+                key=lambda h: self.beliefs.get(h.id, HypothesisBelief(hypothesis_id=h.id)).posterior,
+            )
+            island.population.remove(worst)
+        return island.population
+
+    def _migrate(self, islands: List[Island]):
+        if len(islands) < 2:
+            return
+        for i, source in enumerate(islands):
+            if not source.population:
+                continue
+            target_island = islands[(i + 1) % len(islands)]
+            best = max(
+                source.population,
+                key=lambda h: self.beliefs.get(h.id, HypothesisBelief(hypothesis_id=h.id)).posterior,
+            )
+            migrant = best.model_copy(deep=True)
+            migrant.id = str(uuid.uuid4())
+            migrant.island = target_island.name
+            if is_novel(migrant, target_island.population, self.config.novelty_threshold):
+                target_island.population.append(migrant)
+                self.beliefs[migrant.id] = HypothesisBelief(
+                    hypothesis_id=migrant.id,
+                    prior=self.beliefs.get(best.id, HypothesisBelief(hypothesis_id=best.id)).posterior,
+                )
+
+    async def _pick_alt_hypothesis(self, islands: List[Island], current_island: Island) -> Optional[HypothesisObject]:
+        other_pops = [
+            h for island in islands if island.name != current_island.name
+            for h in island.population
+        ]
+        if not other_pops:
+            return None
+        return max(
+            other_pops,
+            key=lambda h: self.beliefs.get(h.id, HypothesisBelief(hypothesis_id=h.id)).posterior,
+        )
+
+    async def run(self, query: str) -> AsyncGenerator[Dict, None]:
+        seed = self._extract_seed(query)
+        islands = self._initialize_islands(seed, query)
+
+        yield {
+            "type": "evolution_start",
+            "num_islands": len(islands),
+            "config": self.config.model_dump(),
+        }
+
+        for generation in range(self.config.max_generations):
+            for island in islands:
+                if not island.population:
+                    continue
+
+                scores = {
+                    h.id: self.beliefs.get(h.id, HypothesisBelief(hypothesis_id=h.id)).posterior
+                    for h in island.population
+                }
+                parent = select_parent(island.population, scores, self._current_alpha(generation))
+
+                operator = self.strategy_selector.select()
+
+                parent_scorecard = self.bank.get_scorecard(parent.id)
+                if not parent_scorecard:
+                    parent_scorecard = await self.validation_agent.validate_hypothesis(
+                        parent.target_gene, parent.disease, parent.id
+                    )
+                    if isinstance(parent_scorecard, dict):
+                        parent_scorecard = ValidationScorecard(**parent_scorecard)
+                    self.bank.add(parent, parent_scorecard)
+                    parent_belief = belief_from_scorecard(parent.id, parent_scorecard)
+                    self.beliefs[parent.id] = parent_belief
+
+                alt = await self._pick_alt_hypothesis(islands, island)
+
+                try:
+                    candidate = await apply_mutation(
+                        operator, parent, parent_scorecard, self.client,
+                        self.model, alt_hypothesis=alt,
+                    )
+                    candidate.island = island.name
+                except Exception as e:
+                    logger.error("Mutation %s failed: %s", operator.value, e)
+                    yield {"type": "mutation_error", "island": island.name, "operator": operator.value, "error": str(e)}
+                    continue
+
+                if not is_novel(candidate, island.population, self.config.novelty_threshold):
+                    yield {"type": "novelty_reject", "island": island.name, "generation": generation}
+                    continue
+
+                try:
+                    scorecard = await self.validation_agent.validate_hypothesis(
+                        candidate.target_gene, candidate.disease, candidate.id
+                    )
+                    if isinstance(scorecard, dict):
+                        scorecard = ValidationScorecard(**scorecard)
+                except Exception as e:
+                    logger.error("Validation failed for candidate: %s", e)
+                    continue
+
+                belief = belief_from_scorecard(candidate.id, scorecard)
+                self.beliefs[candidate.id] = belief
+                self.bank.add(candidate, scorecard)
+
+                candidate.belief_prior = 0.5
+                candidate.belief_posterior = belief.posterior
+                candidate.belief_trajectory = belief.trajectory
+
+                parent_posterior = self.beliefs.get(
+                    parent.id, HypothesisBelief(hypothesis_id=parent.id)
+                ).posterior
+                delta = belief.posterior - parent_posterior
+                self.strategy_selector.update(operator, delta)
+
+                update_stall_tracking(island, belief.posterior)
+                self._update_population(island, candidate, belief)
+                island.generation_history.append((candidate.id, belief.posterior))
+
+                yield {
+                    "type": "evolution_step",
+                    "generation": generation,
+                    "island": island.name,
+                    "hypothesis": candidate.model_dump(),
+                    "belief_posterior": round(belief.posterior, 4),
+                    "operator_used": operator.value,
+                    "delta": round(delta, 4),
+                    "scorecard_summary": {
+                        "overall_score": scorecard.overall_score,
+                        "overall_status": scorecard.overall_status.value,
+                    },
+                }
+
+            # Migration
+            if generation > 0 and generation % self.config.migration_interval == 0:
+                self._migrate(islands)
+                yield {"type": "migration", "generation": generation}
+
+            # Meta-guidance for stalled islands
+            for island in islands:
+                if detect_stall(island, self.config.stall_threshold):
+                    history = self.bank.get_island_history(island.name)
+                    tactic = await generate_meta_guidance(history, self.client, self.model)
+                    yield {"type": "meta_guidance", "island": island.name, "tactic": tactic}
+
+                    if island.population:
+                        try:
+                            meta_seed = await inject_meta_seed(
+                                island, tactic, island.population[0], self.client, self.model,
+                            )
+                            island.population.append(meta_seed)
+                            self.beliefs[meta_seed.id] = HypothesisBelief(hypothesis_id=meta_seed.id)
+                        except Exception as e:
+                            logger.error("Meta-seed injection failed: %s", e)
+                    island.stall_count = 0
+
+        # Final ranked results
+        all_hypotheses = []
+        for island in islands:
+            all_hypotheses.extend(island.population)
+
+        ranked = sorted(
+            all_hypotheses,
+            key=lambda h: self.beliefs.get(h.id, HypothesisBelief(hypothesis_id=h.id)).posterior,
+            reverse=True,
+        )
+
+        for h in ranked:
+            b = self.beliefs.get(h.id)
+            if b:
+                h.belief_posterior = b.posterior
+                h.belief_trajectory = b.trajectory
+
+        yield {
+            "type": "final_results",
+            "hypotheses": [h.model_dump() for h in ranked],
+            "beliefs": {
+                h.id: round(self.beliefs.get(h.id, HypothesisBelief(hypothesis_id=h.id)).posterior, 4)
+                for h in ranked
+            },
+            "bandit_stats": self.strategy_selector.get_stats(),
+            "island_summary": [
+                {"name": isl.name, "population_size": len(isl.population), "best_score": round(isl.best_score, 4)}
+                for isl in islands
+            ],
+        }
