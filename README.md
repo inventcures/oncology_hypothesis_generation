@@ -1,5 +1,7 @@
 # Onco-TTT (Oncology Test-Time Training Engine)
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/INVENTCURES/ONCOLOGY_HYPOTHESIS_GENERATION)
+
 An AI-driven hypothesis generation platform that uses Test-Time Training (TTT) to adapt to specific oncology research queries in real-time.
 
 ## Architecture
