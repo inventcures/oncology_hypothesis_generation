@@ -145,3 +145,136 @@ def select_parent(
     ranks = range(1, len(sorted_pop) + 1)
     weights = [1.0 / (r ** alpha) for r in ranks]
     return random.choices(sorted_pop, weights=weights, k=1)[0]
+
+
+# ---------------------------------------------------------------------------
+# Mutation Operators — specialized LLM prompts per strategy
+# ---------------------------------------------------------------------------
+
+MUTATION_PROMPTS: Dict[MutationOperator, str] = {
+    MutationOperator.PIVOT_GENE: """\
+You are an oncology research strategist. The current hypothesis targets {target_gene} \
+in {disease}, but validation shows weak essentiality or target fitness.
+
+Find a RELATED gene (same pathway, paralog, synthetic lethal partner, or \
+upstream/downstream regulator) that is more likely to be essential in this \
+disease context. Keep the disease and therapeutic approach similar.
+
+Validation feedback (score {score}/100): {synthesis}""",
+
+    MutationOperator.PIVOT_DISEASE: """\
+You are an oncology research strategist. The current hypothesis targets {target_gene} \
+in {disease}, but the indication fit is poor.
+
+Identify a DIFFERENT cancer type or subtype where {target_gene} is more \
+essential, has better survival correlation, or faces less competition. \
+Keep the target gene and mechanism similar.
+
+Validation feedback (score {score}/100): {synthesis}""",
+
+    MutationOperator.NARROW_POPULATION: """\
+You are an oncology research strategist. The current hypothesis targets {target_gene} \
+in {disease}, but it faces HIGH competition from existing trials.
+
+NARROW the patient population by adding a co-mutation, biomarker requirement, \
+or histological subtype that creates a differentiated niche. The goal is to \
+reduce competitive overlap while maintaining biological rationale.
+
+Validation feedback (score {score}/100): {synthesis}""",
+
+    MutationOperator.COMBINATION: """\
+You are an oncology research strategist. You have two promising hypotheses:
+
+Hypothesis A: {target_gene} in {disease} via {mechanism}
+Hypothesis B: {alt_gene} in {alt_disease} via {alt_mechanism}
+
+COMBINE the best elements of both into a single superior hypothesis. \
+This could be a combination therapy, a dual-target approach, or a mechanism \
+that bridges both biological insights.
+
+Validation feedback on A (score {score}/100): {synthesis}""",
+
+    MutationOperator.MECHANISM_SHIFT: """\
+You are an oncology research strategist. The current hypothesis targets {target_gene} \
+in {disease} via {mechanism}, but the current modality has druggability issues.
+
+Explore a DIFFERENT therapeutic modality for the same target-disease pair. \
+Consider: small molecule inhibitor, PROTAC/degrader, antibody-drug conjugate, \
+bispecific antibody, CAR-T, mRNA vaccine, antisense oligonucleotide, or \
+synthetic lethality-based combination.
+
+Validation feedback (score {score}/100): {synthesis}""",
+
+    MutationOperator.CROSS_POLLINATE: """\
+You are an oncology research strategist. This island has stalled. \
+A different evolutionary island produced this promising hypothesis:
+
+Donor hypothesis: {alt_gene} in {alt_disease} via {alt_mechanism}
+
+Import an IDEA from this donor and apply it to the current context of \
+{target_gene} in {disease}. The import could be a mechanism insight, \
+a patient selection strategy, or a therapeutic angle that hasn't been tried \
+on this island yet.
+
+Validation feedback (score {score}/100): {synthesis}""",
+}
+
+MUTATION_JSON_SCHEMA = """\
+
+Return a JSON object (no markdown fencing):
+{{"target_gene": "...", "disease": "...", "mutation": "... or null", \
+"mechanism": "...", "rationale": "Why this is better", \
+"refinement_reason": "Specific change made"}}"""
+
+
+async def apply_mutation(
+    operator: MutationOperator,
+    parent: HypothesisObject,
+    scorecard: ValidationScorecard,
+    client: anthropic.AsyncAnthropic,
+    model: str = "claude-sonnet-4-20250514",
+    alt_hypothesis: Optional[HypothesisObject] = None,
+) -> HypothesisObject:
+    template = MUTATION_PROMPTS[operator]
+
+    fmt_args: Dict[str, Any] = {
+        "target_gene": parent.target_gene,
+        "disease": parent.disease,
+        "mechanism": parent.mechanism,
+        "mutation": parent.mutation or "wild-type",
+        "score": scorecard.overall_score,
+        "synthesis": scorecard.synthesis,
+    }
+    if alt_hypothesis:
+        fmt_args.update({
+            "alt_gene": alt_hypothesis.target_gene,
+            "alt_disease": alt_hypothesis.disease,
+            "alt_mechanism": alt_hypothesis.mechanism,
+        })
+    else:
+        fmt_args.update({"alt_gene": "", "alt_disease": "", "alt_mechanism": ""})
+
+    prompt = template.format(**fmt_args) + MUTATION_JSON_SCHEMA
+
+    response = await client.messages.create(
+        model=model,
+        max_tokens=800,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    content = response.content[0].text
+    json_str = content[content.find("{"):content.rfind("}") + 1]
+    result = json.loads(json_str)
+
+    return HypothesisObject(
+        id=str(uuid.uuid4()),
+        target_gene=result["target_gene"],
+        disease=result["disease"],
+        mutation=result.get("mutation"),
+        mechanism=result["mechanism"],
+        rationale=result.get("rationale", ""),
+        iteration=parent.iteration + 1,
+        parent_id=parent.id,
+        refinement_reason=result.get("refinement_reason", ""),
+        island=parent.island,
+        operator_used=operator,
+    )
