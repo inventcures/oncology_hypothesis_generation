@@ -19,14 +19,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import OrderedDict
 from .schemas import (
-    HypothesisObject, 
-    ValidationScorecard, 
-    ValidationStatus, 
+    HypothesisObject,
+    ValidationScorecard,
+    ValidationStatus,
     FidelityLevel,
+    EvolutionConfig,
     MASTReport,
     MASTFailureMode
 )
 from .mast_monitor import MASTMonitor
+from .hypothesis_evolution import AHEEController
 import anthropic
 
 # Tool definitions for Claude
@@ -301,13 +303,22 @@ class AgentOrchestrator:
         self.tools_called = 0
         self.tools_skipped = 0
 
+    def create_ahee_controller(self, config: Optional[EvolutionConfig] = None) -> AHEEController:
+        return AHEEController(
+            client=self.client,
+            validation_agent=self.validation_agent,
+            extractor=self.extractor,
+            config=config,
+            model=self.model,
+        )
+
     async def run_evolution_loop(self, initial_query: str, max_iterations: int = 3) -> List[Tuple[HypothesisObject, ValidationScorecard]]:
         """
         Full ADRS loop: Generate -> Evaluate -> Refine.
+        Backward-compatible — delegates to legacy linear loop.
         """
         history = []
-        
-        # 1. Initial Extraction using GLiNER2
+
         target_gene = "Unknown"
         disease = "Cancer"
         mutation = None
@@ -319,11 +330,9 @@ class AgentOrchestrator:
                 genes = extraction.get("entities", {}).get("gene", [])
                 if genes:
                     target_gene = genes[0]["text"]
-                
                 diseases = extraction.get("entities", {}).get("disease", [])
                 if diseases:
                     disease = diseases[0]["text"]
-                
                 mutations = extraction.get("entities", {}).get("mutation", [])
                 if mutations:
                     mutation = mutations[0]["text"]
@@ -341,22 +350,18 @@ class AgentOrchestrator:
         )
 
         for i in range(max_iterations):
-            # 2. Evaluation (Reliable Verifier)
             scorecard_data = await self.validation_agent.validate_hypothesis(
-                current_hypothesis.target_gene, 
+                current_hypothesis.target_gene,
                 current_hypothesis.disease
             )
-            # Ensure it returns ValidationScorecard schema
             scorecard = ValidationScorecard(**scorecard_data) if isinstance(scorecard_data, dict) else scorecard_data
-            
             history.append((current_hypothesis, scorecard))
-            
+
             if scorecard.overall_status == ValidationStatus.PASS or i == max_iterations - 1:
                 break
-                
-            # 3. Refinement (ADRS Evolver)
+
             current_hypothesis = await self.evolver.evolve(current_hypothesis, scorecard)
-            
+
         return history
 
     async def process_query(self, query: str, context: Optional[str] = None) -> Dict[str, Any]:

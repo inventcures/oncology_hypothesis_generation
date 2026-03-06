@@ -46,11 +46,12 @@ from .orchestrator import AgentOrchestrator
 from .entity_extraction import get_extractor
 from .clinical_trials import ClinicalTrialsClient
 from .schemas import (
-    HypothesisObject, 
-    ValidationScorecard, 
-    MASTReport, 
+    HypothesisObject,
+    ValidationScorecard,
+    MASTReport,
     ValidationStatus,
-    FidelityLevel
+    FidelityLevel,
+    EvolutionConfig,
 )
 
 import httpx
@@ -1445,6 +1446,44 @@ async def evolve_hypothesis(query: Query, max_iterations: int = 3):
         "final_status": history[-1][1].overall_status,
         "history": evolution_history
     }
+
+class EvolvedQuery(BaseModel):
+    text: str = Field(..., max_length=2000)
+    config: Optional[EvolutionConfig] = None
+
+
+@app.post("/generate-evolved", dependencies=[Depends(verify_api_key)])
+async def generate_evolved(req: EvolvedQuery):
+    """
+    V10 Adaptive Hypothesis Evolution Engine (AHEE).
+    SSE stream of multi-island evolution with Bayesian belief tracking,
+    bandit-selected mutation operators, and meta-guidance on stall.
+    """
+
+    async def event_stream():
+        import time as _time
+
+        _t0 = _time.monotonic()
+
+        def _sse(payload: dict) -> str:
+            payload["elapsed_ms"] = int((_time.monotonic() - _t0) * 1000)
+            return f"data: {json.dumps(payload)}\n\n"
+
+        controller = orchestrator.create_ahee_controller(req.config)
+
+        async for event in controller.run(req.text):
+            yield _sse(event)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 @app.get("/health")
 def health_check():
