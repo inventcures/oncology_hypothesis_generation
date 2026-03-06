@@ -342,3 +342,117 @@ class AdaptiveStrategySelector:
                 for op, arm in self.arms.items()
             },
         }
+
+
+# ---------------------------------------------------------------------------
+# Meta-Guidance & Stall Detection (AdaEvolve)
+# ---------------------------------------------------------------------------
+
+def detect_stall(island: Island, threshold: int = 2) -> bool:
+    return island.stall_count >= threshold
+
+
+def update_stall_tracking(island: Island, new_best: float):
+    if new_best > island.best_score:
+        island.best_score = new_best
+        island.stall_count = 0
+    else:
+        island.stall_count += 1
+
+
+async def generate_meta_guidance(
+    history: List[Tuple[HypothesisObject, ValidationScorecard]],
+    client: anthropic.AsyncAnthropic,
+    model: str = "claude-sonnet-4-20250514",
+) -> Dict[str, str]:
+    if not history:
+        return {"tactic": "Start fresh with a new biological axis", "reasoning": "No history available"}
+
+    summary = "\n".join([
+        f"- {h.target_gene}/{h.disease}/{h.mechanism} "
+        f"(op={h.operator_used.value if h.operator_used else 'seed'}) "
+        f"-> score={s.overall_score}, status={s.overall_status.value}, "
+        f"reason={h.refinement_reason or 'initial'}"
+        for h, s in history
+    ])
+
+    prompt = f"""You are a meta-strategist for oncology hypothesis evolution.
+
+The following hypotheses have been tried and their validation outcomes:
+{summary}
+
+The evolution is stalled -- no improvement in recent iterations.
+
+Analyze the pattern of failures and propose a NOVEL strategic direction \
+that hasn't been tried yet. Think beyond incremental changes:
+- Is there a completely different biological axis to explore?
+- Is the original research question too narrow or too broad?
+- Should we pivot to a different therapeutic modality entirely?
+
+Return a JSON object (no markdown fencing):
+{{"tactic": "description of novel approach", "reasoning": "why this might break the stall"}}"""
+
+    try:
+        response = await client.messages.create(
+            model=model,
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content = response.content[0].text
+        json_str = content[content.find("{"):content.rfind("}") + 1]
+        return json.loads(json_str)
+    except Exception as e:
+        logger.error("Meta-guidance generation failed: %s", e)
+        return {"tactic": "Try a completely unrelated gene in the disease pathway", "reasoning": f"LLM fallback due to: {e}"}
+
+
+async def inject_meta_seed(
+    island: Island,
+    tactic: Dict[str, str],
+    base_hypothesis: HypothesisObject,
+    client: anthropic.AsyncAnthropic,
+    model: str = "claude-sonnet-4-20250514",
+) -> HypothesisObject:
+    prompt = f"""You are an oncology hypothesis generator.
+
+A meta-strategist has suggested the following novel tactic:
+Tactic: {tactic['tactic']}
+Reasoning: {tactic['reasoning']}
+
+The previous best hypothesis was: {base_hypothesis.target_gene} in \
+{base_hypothesis.disease} via {base_hypothesis.mechanism}.
+
+Generate a NEW hypothesis that follows the meta-strategist's tactic. \
+This should be a significant departure from what's been tried before.
+
+Return a JSON object (no markdown fencing):
+{{"target_gene": "...", "disease": "...", "mutation": "... or null", \
+"mechanism": "...", "rationale": "Why this follows the new tactic", \
+"refinement_reason": "Meta-guidance: {tactic['tactic'][:80]}"}}"""
+
+    try:
+        response = await client.messages.create(
+            model=model,
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content = response.content[0].text
+        json_str = content[content.find("{"):content.rfind("}") + 1]
+        result = json.loads(json_str)
+
+        return HypothesisObject(
+            id=str(uuid.uuid4()),
+            target_gene=result["target_gene"],
+            disease=result["disease"],
+            mutation=result.get("mutation"),
+            mechanism=result["mechanism"],
+            rationale=result.get("rationale", ""),
+            iteration=base_hypothesis.iteration + 1,
+            parent_id=base_hypothesis.id,
+            refinement_reason=result.get("refinement_reason", ""),
+            island=island.name,
+            operator_used=MutationOperator.CROSS_POLLINATE,
+        )
+    except Exception as e:
+        logger.error("Meta-seed injection failed: %s", e)
+        raise
