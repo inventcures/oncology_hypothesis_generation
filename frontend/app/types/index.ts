@@ -224,6 +224,11 @@ export type HypothesisObject = {
   iteration: number;
   parent_id?: string;
   refinement_reason?: string;
+  island?: string;
+  operator_used?: string;
+  belief_prior: number;
+  belief_posterior: number;
+  belief_trajectory: number[];
 };
 
 export type EvolutionHistoryItem = {
@@ -237,6 +242,74 @@ export type EvolutionResponse = {
   final_status: string;
   history: EvolutionHistoryItem[];
 };
+
+// --- V10: Adaptive Hypothesis Evolution Engine (AHEE) ---
+
+export type EvolutionStepEvent = {
+  type: "evolution_step";
+  generation: number;
+  island: string;
+  hypothesis: HypothesisObject;
+  belief_posterior: number;
+  operator_used: string;
+  delta: number;
+  scorecard_summary: {
+    overall_score: number;
+    overall_status: string;
+  };
+  elapsed_ms: number;
+};
+
+export type EvolutionStartEvent = {
+  type: "evolution_start";
+  num_islands: number;
+  config: Record<string, unknown>;
+  elapsed_ms: number;
+};
+
+export type MigrationEvent = {
+  type: "migration";
+  generation: number;
+  elapsed_ms: number;
+};
+
+export type MetaGuidanceEvent = {
+  type: "meta_guidance";
+  island: string;
+  tactic: { tactic: string; reasoning: string };
+  elapsed_ms: number;
+};
+
+export type NoveltyRejectEvent = {
+  type: "novelty_reject";
+  island: string;
+  generation: number;
+  elapsed_ms: number;
+};
+
+export type EvolutionFinalEvent = {
+  type: "final_results";
+  hypotheses: HypothesisObject[];
+  beliefs: Record<string, number>;
+  bandit_stats: {
+    total_pulls: number;
+    arms: Record<
+      string,
+      { pull_count: number; avg_reward: number; ucb_score: number }
+    >;
+  };
+  island_summary: { name: string; population_size: number; best_score: number }[];
+  elapsed_ms: number;
+};
+
+export type EvolutionSSEEvent =
+  | EvolutionStartEvent
+  | EvolutionStepEvent
+  | MigrationEvent
+  | MetaGuidanceEvent
+  | NoveltyRejectEvent
+  | EvolutionFinalEvent
+  | { type: "mutation_error"; island: string; operator: string; error: string; elapsed_ms: number };
 
 // --- Validation ---
 
@@ -333,7 +406,8 @@ export type ViewMode =
   | "deep_research"
   | "trials"
   | "dossier"
-  | "competitive";
+  | "competitive"
+  | "evolution";
 
 // --- Query History ---
 

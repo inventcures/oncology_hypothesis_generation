@@ -93,6 +93,15 @@ const CompetitiveDashboard = dynamic(() => import("./components/CompetitiveDashb
   ),
 });
 
+const EvolutionDashboard = dynamic(() => import("./components/EvolutionDashboard"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center">
+      <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  ),
+});
+
 type EvidenceItem = {
   type: string;
   source?: string;
@@ -353,7 +362,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [status, setStatus] = useState("Idle");
-  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials" | "pathway" | "dossier" | "indications" | "whatif" | "competitive">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "table" | "metrics" | "papers" | "validate" | "deep_research" | "trials" | "pathway" | "dossier" | "indications" | "whatif" | "competitive" | "evolution">("graph");
   const [drData, setDrData] = useState<DeepResearchData | null>(null);
   const [drLoading, setDrLoading] = useState(false);
   const [validationData, setValidationData] = useState<any>(null);
@@ -454,7 +463,7 @@ export default function Home() {
     const params = new URLSearchParams(window.location.search);
     const urlQuery = params.get("q");
     const urlView = params.get("view");
-    if (urlView && ["graph","table","metrics","papers","validate","deep_research","trials","pathway","dossier","indications","whatif","competitive"].includes(urlView)) {
+    if (urlView && ["graph","table","metrics","papers","validate","deep_research","trials","pathway","dossier","indications","whatif","competitive","evolution"].includes(urlView)) {
       setPendingView(urlView);
     }
     if (urlQuery) {
@@ -1305,6 +1314,13 @@ export default function Home() {
                 >
                     <BarChart3 size={16} />
                     <span>Intel</span>
+                </button>
+                <button
+                    onClick={() => setViewMode("evolution")}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "evolution" ? "bg-indigo-50 text-indigo-600 shadow-sm border border-indigo-100" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                    <GitBranch size={16} />
+                    <span>Evolve</span>
                 </button>
             </div>
 
@@ -2466,6 +2482,10 @@ export default function Home() {
                                     onReset={() => setWhatIfResult(null)}
                                 />
                             </div>
+                        )}
+
+                        {viewMode === "evolution" && (
+                            <EvolutionDashboard query={query} />
                         )}
 
                         {viewMode === "competitive" && (
