@@ -278,3 +278,67 @@ async def apply_mutation(
         island=parent.island,
         operator_used=operator,
     )
+
+
+# ---------------------------------------------------------------------------
+# UCB1 Bandit Strategy Selector (AdaEvolve)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BanditArm:
+    operator: MutationOperator
+    total_reward: float = 0.0
+    pull_count: int = 0
+
+    def ucb_score(self, total_pulls: int, c: float = 1.414) -> float:
+        if self.pull_count == 0:
+            return float("inf")
+        exploitation = self.total_reward / self.pull_count
+        exploration = c * math.sqrt(math.log(total_pulls) / self.pull_count)
+        return exploitation + exploration
+
+    @property
+    def avg_reward(self) -> float:
+        return self.total_reward / self.pull_count if self.pull_count > 0 else 0.0
+
+
+class AdaptiveStrategySelector:
+    def __init__(self, ucb_c: float = 1.414):
+        self.ucb_c = ucb_c
+        self.arms: Dict[MutationOperator, BanditArm] = {
+            op: BanditArm(operator=op) for op in MutationOperator
+        }
+        self._total_pulls = 0
+
+    def select(self, exclude: Optional[List[MutationOperator]] = None) -> MutationOperator:
+        candidates = {
+            op: arm for op, arm in self.arms.items()
+            if exclude is None or op not in exclude
+        }
+        if not candidates:
+            candidates = self.arms
+
+        best_op = max(
+            candidates,
+            key=lambda op: candidates[op].ucb_score(max(self._total_pulls, 1), self.ucb_c),
+        )
+        return best_op
+
+    def update(self, operator: MutationOperator, reward: float):
+        arm = self.arms[operator]
+        arm.total_reward += reward
+        arm.pull_count += 1
+        self._total_pulls += 1
+
+    def get_stats(self) -> Dict[str, Any]:
+        return {
+            "total_pulls": self._total_pulls,
+            "arms": {
+                op.value: {
+                    "pull_count": arm.pull_count,
+                    "avg_reward": round(arm.avg_reward, 4),
+                    "ucb_score": round(arm.ucb_score(max(self._total_pulls, 1), self.ucb_c), 4),
+                }
+                for op, arm in self.arms.items()
+            },
+        }
